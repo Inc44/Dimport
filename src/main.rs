@@ -54,6 +54,17 @@ struct AttachmentInfo {
     url: String,
     file_name: String,
 }
+#[derive(Default)]
+struct ImportOptions {
+    no_guild: bool,
+    no_category: bool,
+    no_channel: bool,
+    no_timestamp: bool,
+    range_start: Option<usize>,
+    range_end: Option<usize>,
+    first: Option<usize>,
+    last: Option<usize>,
+}
 enum ImageSource {
     Local(PathBuf, String),
     Remote(String),
@@ -122,10 +133,34 @@ fn build_media_index(media_path: &Option<String>, json_path: &str) -> Option<Fil
         build_file_index(&search_paths)
     })
 }
+fn build_footer_text(
+    export: &Export,
+    no_guild: bool,
+    no_category: bool,
+    no_channel: bool,
+) -> String {
+    let mut parts = Vec::new();
+    if !no_guild {
+        parts.push(export.guild.name.as_str());
+    }
+    if !no_category {
+        if let Some(category) = export.channel.category.as_deref() {
+            parts.push(category);
+        }
+    }
+    if !no_channel {
+        parts.push(export.channel.name.as_str());
+    }
+    parts.join(" | ")
+}
 fn create_base_embed(
     message: &MessageInfo,
     export: &Export,
     avatar_filename: Option<&String>,
+    no_guild: bool,
+    no_category: bool,
+    no_channel: bool,
+    no_timestamp: bool,
 ) -> serenity::CreateEmbed {
     let mut author_builder = serenity::CreateEmbedAuthor::new(&message.author.name)
         .url(format!("https://discord.com/users/{}", message.author.id));
@@ -134,23 +169,23 @@ fn create_base_embed(
     } else {
         author_builder = author_builder.icon_url(&message.author.avatar_url);
     }
-    let footer_text = format!(
-        "{} | {} | {}",
-        export.guild.name,
-        export.channel.category.as_deref().unwrap_or(""),
-        export.channel.name
-    );
+    let footer_text = build_footer_text(export, no_guild, no_category, no_channel);
     let timestamp_str = message
         .timestamp_edited
         .as_deref()
         .unwrap_or(&message.timestamp);
-    let mut embed = serenity::CreateEmbed::new()
-        .author(author_builder)
-        .footer(serenity::CreateEmbedFooter::new(footer_text))
-        .timestamp(
-            serenity::Timestamp::parse(timestamp_str)
-                .unwrap_or_else(|_| serenity::Timestamp::now()),
-        );
+    let timestamp = if no_timestamp {
+        None
+    } else {
+        serenity::Timestamp::parse(timestamp_str).ok()
+    };
+    let mut embed = serenity::CreateEmbed::new().author(author_builder);
+    if !footer_text.is_empty() {
+        embed = embed.footer(serenity::CreateEmbedFooter::new(footer_text));
+    }
+    if let Some(ts) = timestamp {
+        embed = embed.timestamp(ts);
+    }
     if let Some(color_value) = message
         .author
         .color
@@ -351,6 +386,10 @@ async fn process_message(
     export: &Export,
     file_index: &Option<FileIndex>,
     seen_paths: &mut HashSet<PathBuf>,
+    no_guild: bool,
+    no_category: bool,
+    no_channel: bool,
+    no_timestamp: bool,
 ) {
     let author_avatar_file = file_index
         .as_ref()
@@ -360,6 +399,10 @@ async fn process_message(
         message,
         export,
         author_avatar_file.as_ref().map(|(_, name)| name),
+        no_guild,
+        no_category,
+        no_channel,
+        no_timestamp,
     );
     if image_sources.is_empty() {
         send_text_message(ctx, message, base_embed, &author_avatar_file).await;
@@ -381,16 +424,171 @@ fn load_export_data(json_path: &str) -> Result<Export, String> {
         fs::read_to_string(json_path).map_err(|e| format!("Error reading JSON file: {e}"))?;
     serde_json::from_str(&content).map_err(|e| format!("Error parsing JSON: {e}"))
 }
+fn build_completion_message(
+    export: &Export,
+    no_guild: bool,
+    no_category: bool,
+    no_channel: bool,
+) -> String {
+    let footer_text = build_footer_text(export, no_guild, no_category, no_channel);
+    if footer_text.is_empty() {
+        "Successfully imported".to_string()
+    } else {
+        format!("Successfully imported {footer_text}")
+    }
+}
+fn select_messages_to_process(
+    messages: &[MessageInfo],
+    range_start: Option<usize>,
+    range_end: Option<usize>,
+    first: Option<usize>,
+    last: Option<usize>,
+) -> &[MessageInfo] {
+    let len = messages.len();
+    if let (Some(s), Some(e)) = (range_start, range_end) {
+        if s <= e && s < len {
+            return &messages[s..=(e.min(len - 1))];
+        }
+    } else if let Some(n) = first {
+        if n > 0 {
+            return &messages[0..n.min(len)];
+        }
+    } else if let Some(n) = last {
+        if n > 0 {
+            let start = len.saturating_sub(n);
+            return &messages[start..];
+        }
+    }
+    messages
+}
+fn split_arguments_respecting_quotes(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut inside_quotes = false;
+    for c in input.chars() {
+        if c == '"' {
+            inside_quotes = !inside_quotes;
+            continue;
+        }
+        if c.is_whitespace() && !inside_quotes {
+            if !current.is_empty() {
+                tokens.push(current);
+                current = String::new();
+            }
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+fn parse_import_options_from_arguments(arguments: &[String]) -> Result<ImportOptions, String> {
+    let mut options = ImportOptions::default();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        match argument.as_str() {
+            "--no-guild" => options.no_guild = true,
+            "--no-category" => options.no_category = true,
+            "--no-channel" => options.no_channel = true,
+            "--no-timestamp" => options.no_timestamp = true,
+            "--range" => {
+                index += 1;
+                if index < arguments.len() {
+                    let range_parts: Vec<&str> = arguments[index].split(',').collect();
+                    if range_parts.len() == 2 {
+                        options.range_start = Some(
+                            range_parts[0]
+                                .parse()
+                                .map_err(|_| "Invalid start value in --range")?,
+                        );
+                        options.range_end = Some(
+                            range_parts[1]
+                                .parse()
+                                .map_err(|_| "Invalid end value in --range")?,
+                        );
+                    } else {
+                        return Err("Invalid format for --range. Use start,end".to_string());
+                    }
+                } else {
+                    return Err("Missing value for --range".to_string());
+                }
+            }
+            "--range-start" => {
+                index += 1;
+                if index < arguments.len() {
+                    options.range_start = Some(
+                        arguments[index]
+                            .parse()
+                            .map_err(|_| "Invalid value for --range-start")?,
+                    );
+                } else {
+                    return Err("Missing value for --range-start".to_string());
+                }
+            }
+            "--range-end" => {
+                index += 1;
+                if index < arguments.len() {
+                    options.range_end = Some(
+                        arguments[index]
+                            .parse()
+                            .map_err(|_| "Invalid value for --range-end")?,
+                    );
+                } else {
+                    return Err("Missing value for --range-end".to_string());
+                }
+            }
+            "--first" => {
+                index += 1;
+                if index < arguments.len() {
+                    options.first = Some(
+                        arguments[index]
+                            .parse()
+                            .map_err(|_| "Invalid value for --first")?,
+                    );
+                } else {
+                    return Err("Missing value for --first".to_string());
+                }
+            }
+            "--last" => {
+                index += 1;
+                if index < arguments.len() {
+                    options.last = Some(
+                        arguments[index]
+                            .parse()
+                            .map_err(|_| "Invalid value for --last")?,
+                    );
+                } else {
+                    return Err("Missing value for --last".to_string());
+                }
+            }
+            unknown => return Err(format!("Unknown option: {unknown}")),
+        }
+        index += 1;
+    }
+    Ok(options)
+}
 #[poise::command(prefix_command)]
 async fn import(
     ctx: Context<'_>,
     json_path: String,
     media_path: Option<String>,
+    #[rest] remaining_arguments: String,
 ) -> Result<(), Error> {
     if json_path.trim().is_empty() {
         ctx.say("Command requires a path to a JSON file.").await?;
         return Ok(());
     }
+    let argument_tokens = split_arguments_respecting_quotes(&remaining_arguments);
+    let options = match parse_import_options_from_arguments(&argument_tokens) {
+        Ok(opts) => opts,
+        Err(e) => {
+            ctx.say(format!("Error parsing options: {e}")).await?;
+            return Ok(());
+        }
+    };
     let export = match load_export_data(&json_path) {
         Ok(data) => data,
         Err(e) => {
@@ -398,19 +596,41 @@ async fn import(
             return Ok(());
         }
     };
+    let messages_to_process = select_messages_to_process(
+        &export.messages,
+        options.range_start,
+        options.range_end,
+        options.first,
+        options.last,
+    );
+    if messages_to_process.is_empty() {
+        ctx.say("No messages to import.").await?;
+        return Ok(());
+    }
     let _ = ctx
-        .say(format!("Importing {} messages…", export.messages.len()))
+        .say(format!("Importing {} messages…", messages_to_process.len()))
         .await?;
     let file_index = build_media_index(&media_path, &json_path);
     let mut seen_paths = HashSet::new();
-    for message in &export.messages {
-        process_message(ctx, message, &export, &file_index, &mut seen_paths).await;
+    for message in messages_to_process {
+        process_message(
+            ctx,
+            message,
+            &export,
+            &file_index,
+            &mut seen_paths,
+            options.no_guild,
+            options.no_category,
+            options.no_channel,
+            options.no_timestamp,
+        )
+        .await;
     }
-    let completion_message = format!(
-        "Successfully imported {} | {} | {}",
-        export.guild.name,
-        export.channel.category.as_deref().unwrap_or(""),
-        export.channel.name
+    let completion_message = build_completion_message(
+        &export,
+        options.no_guild,
+        options.no_category,
+        options.no_channel,
     );
     let _ = ctx.say(completion_message).await?;
     Ok(())
