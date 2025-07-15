@@ -5,7 +5,6 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
-    time::Duration,
 };
 use walkdir::WalkDir;
 const SUPPORTED_IMAGE_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
@@ -341,7 +340,6 @@ async fn send_image_messages(
                 reply = reply.attachment(attachment);
             }
             let _ = ctx.send(reply).await;
-            tokio::time::sleep(Duration::from_millis(500)).await;
         }
         remaining_images = &remaining_images[images_processed..];
         is_first_message_batch = false;
@@ -377,7 +375,6 @@ async fn process_message(
         )
         .await;
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
 }
 fn load_export_data(json_path: &str) -> Result<Export, String> {
     let content =

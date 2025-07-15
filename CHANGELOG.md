@@ -17,3 +17,7 @@ An argument parsing tokenizer was created.
 I discovered that parsing arguments was possible with poise.
 
 Even more spaghetti code was eliminated.
+
+---
+
+No need for sleep as Discord is rate-limited automatically and receives all messages eventually.
