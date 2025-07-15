@@ -1,15 +1,6 @@
+use poise::serenity_prelude as serenity;
+use poise::{CreateReply, Framework, FrameworkOptions};
 use serde::Deserialize;
-use serenity::{
-    async_trait,
-    builder::{CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage},
-    model::{
-        channel::Message,
-        gateway::Ready,
-        id::{ChannelId, UserId},
-        Timestamp,
-    },
-    prelude::*,
-};
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
@@ -21,6 +12,8 @@ const SUPPORTED_IMAGE_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gi
 const MAX_EMBEDS_PER_MESSAGE: usize = 10;
 const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
 type FileIndex = HashMap<String, Vec<PathBuf>>;
+type Error = Box<dyn std::error::Error + Send + Sync>;
+type Context<'a> = poise::Context<'a, (), Error>;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Export {
@@ -51,7 +44,7 @@ struct MessageInfo {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Author {
-    id: UserId,
+    id: serenity::UserId,
     name: String,
     avatar_url: String,
     color: Option<String>,
@@ -134,8 +127,8 @@ fn create_base_embed(
     message: &MessageInfo,
     export: &Export,
     avatar_filename: Option<&String>,
-) -> CreateEmbed {
-    let mut author_builder = CreateEmbedAuthor::new(&message.author.name)
+) -> serenity::CreateEmbed {
+    let mut author_builder = serenity::CreateEmbedAuthor::new(&message.author.name)
         .url(format!("https://discord.com/users/{}", message.author.id));
     if let Some(filename) = avatar_filename {
         author_builder = author_builder.icon_url(format!("attachment://{filename}"));
@@ -152,10 +145,13 @@ fn create_base_embed(
         .timestamp_edited
         .as_deref()
         .unwrap_or(&message.timestamp);
-    let mut embed = CreateEmbed::new()
+    let mut embed = serenity::CreateEmbed::new()
         .author(author_builder)
-        .footer(CreateEmbedFooter::new(footer_text))
-        .timestamp(Timestamp::parse(timestamp_str).unwrap_or_else(|_| Timestamp::now()));
+        .footer(serenity::CreateEmbedFooter::new(footer_text))
+        .timestamp(
+            serenity::Timestamp::parse(timestamp_str)
+                .unwrap_or_else(|_| serenity::Timestamp::now()),
+        );
     if let Some(color_value) = message
         .author
         .color
@@ -167,7 +163,7 @@ fn create_base_embed(
     embed
 }
 fn find_author_avatar_file(
-    author_id: &UserId,
+    author_id: &serenity::UserId,
     file_index: &FileIndex,
 ) -> Option<(PathBuf, String)> {
     SUPPORTED_IMAGE_EXTENSIONS.iter().find_map(|ext| {
@@ -241,18 +237,22 @@ fn collect_image_sources(
 }
 async fn prepare_message_batch<'a>(
     images: &'a [ImageSource],
-    base_embed: &CreateEmbed,
+    base_embed: &serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
     is_first_message_batch: bool,
     content: &str,
     embed_url: &str,
-) -> (Vec<CreateAttachment>, Vec<CreateEmbed>, usize) {
+) -> (
+    Vec<serenity::CreateAttachment>,
+    Vec<serenity::CreateEmbed>,
+    usize,
+) {
     let mut attachments = Vec::new();
     let mut embeds = Vec::new();
     let mut images_processed = 0;
     if is_first_message_batch {
         if let Some((avatar_path, _)) = author_avatar_file {
-            if let Ok(attachment) = CreateAttachment::path(avatar_path).await {
+            if let Ok(attachment) = serenity::CreateAttachment::path(avatar_path).await {
                 attachments.push(attachment);
             }
         }
@@ -273,12 +273,12 @@ async fn prepare_message_batch<'a>(
             }
             embed
         } else {
-            CreateEmbed::new()
+            serenity::CreateEmbed::new()
         };
         embed_builder = embed_builder.url(embed_url);
         match source {
             ImageSource::Local(path, filename) => {
-                if let Ok(attachment) = CreateAttachment::path(path).await {
+                if let Ok(attachment) = serenity::CreateAttachment::path(path).await {
                     attachments.push(attachment);
                     embed_builder = embed_builder.image(format!("attachment://{filename}"));
                 } else {
@@ -295,29 +295,27 @@ async fn prepare_message_batch<'a>(
     (attachments, embeds, images_processed)
 }
 async fn send_text_message(
-    ctx: &Context,
-    channel_id: &ChannelId,
+    ctx: Context<'_>,
     message: &MessageInfo,
-    base_embed: CreateEmbed,
+    base_embed: serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
 ) {
     if message.content.is_empty() && author_avatar_file.is_none() {
         return;
     }
     let embed_builder = base_embed.description(&message.content);
-    let mut message_builder = CreateMessage::new().embed(embed_builder);
+    let mut reply = CreateReply::default().embed(embed_builder);
     if let Some((avatar_path, _)) = author_avatar_file {
-        if let Ok(attachment) = CreateAttachment::path(avatar_path).await {
-            message_builder = message_builder.add_file(attachment);
+        if let Ok(attachment) = serenity::CreateAttachment::path(avatar_path).await {
+            reply = reply.attachment(attachment);
         }
     }
-    let _ = channel_id.send_message(&ctx.http, message_builder).await;
+    let _ = ctx.send(reply).await;
 }
 async fn send_image_messages(
-    ctx: &Context,
-    channel_id: &ChannelId,
+    ctx: Context<'_>,
     message: &MessageInfo,
-    base_embed: CreateEmbed,
+    base_embed: serenity::CreateEmbed,
     image_sources: Vec<ImageSource>,
     author_avatar_file: Option<(PathBuf, String)>,
     embed_url: String,
@@ -335,12 +333,14 @@ async fn send_image_messages(
         )
         .await;
         if !embeds.is_empty() {
-            let _ = channel_id
-                .send_message(
-                    &ctx.http,
-                    CreateMessage::new().embeds(embeds).add_files(attachments),
-                )
-                .await;
+            let mut reply = CreateReply::default();
+            for embed in embeds {
+                reply = reply.embed(embed);
+            }
+            for attachment in attachments {
+                reply = reply.attachment(attachment);
+            }
+            let _ = ctx.send(reply).await;
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         remaining_images = &remaining_images[images_processed..];
@@ -348,8 +348,7 @@ async fn send_image_messages(
     }
 }
 async fn process_message(
-    ctx: &Context,
-    channel_id: &ChannelId,
+    ctx: Context<'_>,
     message: &MessageInfo,
     export: &Export,
     file_index: &Option<FileIndex>,
@@ -365,12 +364,11 @@ async fn process_message(
         author_avatar_file.as_ref().map(|(_, name)| name),
     );
     if image_sources.is_empty() {
-        send_text_message(ctx, channel_id, message, base_embed, &author_avatar_file).await;
+        send_text_message(ctx, message, base_embed, &author_avatar_file).await;
     } else {
         let embed_url = format!("https://discord.com/users/{}", message.author.id);
         send_image_messages(
             ctx,
-            channel_id,
             message,
             base_embed,
             image_sources,
@@ -386,69 +384,30 @@ fn load_export_data(json_path: &str) -> Result<Export, String> {
         fs::read_to_string(json_path).map_err(|e| format!("Error reading JSON file: {e}"))?;
     serde_json::from_str(&content).map_err(|e| format!("Error parsing JSON: {e}"))
 }
-fn parse_import_args(args: &str) -> (String, Option<String>) {
-    let mut trimmed_args = args.trim();
-    if trimmed_args.starts_with('"') {
-        trimmed_args = &trimmed_args[1..];
-        if let Some(end_quote_pos) = trimmed_args.find('"') {
-            let first_part = trimmed_args[..end_quote_pos].to_string();
-            let remaining_part = trimmed_args[end_quote_pos + 1..].trim();
-            return (
-                first_part,
-                if remaining_part.is_empty() {
-                    None
-                } else {
-                    Some(remaining_part.trim_matches('"').to_string())
-                },
-            );
-        }
-    }
-    match trimmed_args.split_once(' ') {
-        Some((first, second)) => (
-            first.to_string(),
-            if second.trim().is_empty() {
-                None
-            } else {
-                Some(second.trim_matches('"').to_string())
-            },
-        ),
-        None => (trimmed_args.to_string(), None),
-    }
-}
-async fn handle_import_command(ctx: &Context, msg: &Message, args: &str) {
-    let (json_path, media_path) = parse_import_args(args);
-    if json_path.is_empty() {
-        let _ = msg
-            .reply(&ctx, "Command requires a path to a JSON file.")
-            .await;
-        return;
+#[poise::command(prefix_command)]
+async fn import(
+    ctx: Context<'_>,
+    json_path: String,
+    media_path: Option<String>,
+) -> Result<(), Error> {
+    if json_path.trim().is_empty() {
+        ctx.say("Command requires a path to a JSON file.").await?;
+        return Ok(());
     }
     let export = match load_export_data(&json_path) {
         Ok(data) => data,
         Err(e) => {
-            let _ = msg.reply(&ctx, e).await;
-            return;
+            let _ = ctx.say(e).await;
+            return Ok(());
         }
     };
-    let _ = msg
-        .channel_id
-        .say(
-            &ctx,
-            format!("Importing {} messages…", export.messages.len()),
-        )
-        .await;
+    let _ = ctx
+        .say(format!("Importing {} messages…", export.messages.len()))
+        .await?;
     let file_index = build_media_index(&media_path, &json_path);
     let mut seen_paths = HashSet::new();
     for message in &export.messages {
-        process_message(
-            ctx,
-            &msg.channel_id,
-            message,
-            &export,
-            &file_index,
-            &mut seen_paths,
-        )
-        .await;
+        process_message(ctx, message, &export, &file_index, &mut seen_paths).await;
     }
     let completion_message = format!(
         "Successfully imported {} | {} | {}",
@@ -456,35 +415,37 @@ async fn handle_import_command(ctx: &Context, msg: &Message, args: &str) {
         export.channel.category.as_deref().unwrap_or(""),
         export.channel.name
     );
-    let _ = msg.channel_id.say(&ctx, completion_message).await;
-}
-struct Handler;
-#[async_trait]
-impl EventHandler for Handler {
-    async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} connected", ready.user.name);
-    }
-    async fn message(&self, ctx: Context, msg: Message) {
-        if msg.author.bot {
-            return;
-        }
-        if let Some(args) = msg.content.strip_prefix("/import ") {
-            handle_import_command(&ctx, &msg, args).await;
-        }
-    }
+    let _ = ctx.say(completion_message).await?;
+    Ok(())
 }
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Error> {
     dotenvy::dotenv().ok();
     let token = env::var("DISCORD_TOKEN").expect("Expected DISCORD_TOKEN in environment");
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
-    Client::builder(token, intents)
-        .event_handler(Handler)
+    let intents = serenity::GatewayIntents::GUILD_MESSAGES
+        | serenity::GatewayIntents::DIRECT_MESSAGES
+        | serenity::GatewayIntents::MESSAGE_CONTENT;
+    let framework = Framework::builder()
+        .options(FrameworkOptions {
+            commands: vec![import()],
+            prefix_options: poise::PrefixFrameworkOptions {
+                prefix: Some("/".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .setup(|ctx, ready, framework| {
+            Box::pin(async move {
+                println!("{} connected", ready.user.name);
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(())
+            })
+        })
+        .build();
+    let mut client = serenity::ClientBuilder::new(token, intents)
+        .framework(framework)
         .await
-        .expect("Error creating client")
-        .start()
-        .await
-        .expect("Error running client");
+        .expect("Error creating client");
+    client.start().await.expect("Error running client");
+    Ok(())
 }
