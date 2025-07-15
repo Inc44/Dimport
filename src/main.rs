@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use walkdir::WalkDir;
 const SUPPORTED_IMAGE_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
@@ -12,7 +13,11 @@ const MAX_EMBEDS_PER_MESSAGE: usize = 10;
 const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
 type FileIndex = HashMap<String, Vec<PathBuf>>;
 type Error = Box<dyn std::error::Error + Send + Sync>;
-type Context<'a> = poise::Context<'a, (), Error>;
+type Context<'a> = poise::Context<'a, Data, Error>;
+#[derive(Default)]
+struct Data {
+    cancellation_flags: Arc<Mutex<HashMap<serenity::ChannelId, bool>>>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Export {
@@ -612,7 +617,25 @@ async fn import(
         .await?;
     let file_index = build_media_index(&media_path, &json_path);
     let mut seen_paths = HashSet::new();
+    ctx.data()
+        .cancellation_flags
+        .lock()
+        .unwrap()
+        .insert(ctx.channel_id(), false);
+    let mut cancelled = false;
     for message in messages_to_process {
+        if ctx
+            .data()
+            .cancellation_flags
+            .lock()
+            .unwrap()
+            .get(&ctx.channel_id())
+            .cloned()
+            .unwrap_or(false)
+        {
+            cancelled = true;
+            break;
+        }
         process_message(
             ctx,
             message,
@@ -626,13 +649,41 @@ async fn import(
         )
         .await;
     }
-    let completion_message = build_completion_message(
-        &export,
-        options.no_guild,
-        options.no_category,
-        options.no_channel,
-    );
-    let _ = ctx.say(completion_message).await?;
+    ctx.data()
+        .cancellation_flags
+        .lock()
+        .unwrap()
+        .remove(&ctx.channel_id());
+    let message = if cancelled {
+        "Import cancelled".to_string()
+    } else {
+        build_completion_message(
+            &export,
+            options.no_guild,
+            options.no_category,
+            options.no_channel,
+        )
+    };
+    let _ = ctx.say(message).await?;
+    Ok(())
+}
+#[poise::command(prefix_command)]
+async fn cancel(ctx: Context<'_>) -> Result<(), Error> {
+    let should_cancel;
+    {
+        let mut lock = ctx.data().cancellation_flags.lock().unwrap();
+        if lock.contains_key(&ctx.channel_id()) {
+            lock.insert(ctx.channel_id(), true);
+            should_cancel = true;
+        } else {
+            should_cancel = false;
+        }
+    }
+    if should_cancel {
+        ctx.say("Cancelling import...").await?;
+    } else {
+        ctx.say("No ongoing import in this channel.").await?;
+    }
     Ok(())
 }
 #[tokio::main]
@@ -644,7 +695,7 @@ async fn main() -> Result<(), Error> {
         | serenity::GatewayIntents::MESSAGE_CONTENT;
     let framework = Framework::builder()
         .options(FrameworkOptions {
-            commands: vec![import()],
+            commands: vec![import(), cancel()],
             prefix_options: poise::PrefixFrameworkOptions {
                 prefix: Some("/".into()),
                 ..Default::default()
@@ -655,7 +706,7 @@ async fn main() -> Result<(), Error> {
             Box::pin(async move {
                 println!("{} connected", ready.user.name);
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(())
+                Ok(Data::default())
             })
         })
         .build();

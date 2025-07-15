@@ -20,6 +20,10 @@ Added options: `--range-start`, `--range-end`, `--first`, `--last`.
 
 Added shorthand `--range start,end`.
 
+---
+
+Added `/cancel`.
+
 # 2025.07.14
 
 More spaghetti was eliminated.
