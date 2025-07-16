@@ -576,18 +576,24 @@ fn parse_import_options_from_arguments(arguments: &[String]) -> Result<ImportOpt
     Ok(options)
 }
 #[poise::command(prefix_command)]
-async fn import(
-    ctx: Context<'_>,
-    json_path: String,
-    media_path: Option<String>,
-    #[rest] remaining_arguments: String,
-) -> Result<(), Error> {
-    if json_path.trim().is_empty() {
+async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
+    let argument_tokens = split_arguments_respecting_quotes(&args);
+    if argument_tokens.is_empty() || argument_tokens[0].trim().is_empty() {
         ctx.say("Command requires a path to a JSON file.").await?;
         return Ok(());
     }
-    let argument_tokens = split_arguments_respecting_quotes(&remaining_arguments);
-    let options = match parse_import_options_from_arguments(&argument_tokens) {
+    let json_path = argument_tokens[0].clone();
+    let (media_path, options_tokens) = if argument_tokens.len() > 1 {
+        let next_str = &argument_tokens[1];
+        if next_str.starts_with("--") {
+            (None, &argument_tokens[1..])
+        } else {
+            (Some(next_str.clone()), &argument_tokens[2..])
+        }
+    } else {
+        (None, &argument_tokens[0..0])
+    };
+    let options = match parse_import_options_from_arguments(options_tokens) {
         Ok(opts) => opts,
         Err(e) => {
             ctx.say(format!("Error parsing options: {e}")).await?;
