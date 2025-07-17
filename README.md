@@ -75,7 +75,6 @@ Discord opens the browser when clicking on a user handle instead of doing the sa
 
 ## 🚧 TODO
 
-- [ ] Outside embed
 - [ ] Reactions (count, users)
 - [ ] Inline emojis
 - [ ] User banner color instead of their exported first role
@@ -83,6 +82,7 @@ Discord opens the browser when clicking on a user handle instead of doing the sa
 - [ ] User mentions by id
 - [ ] Write docs/wiki (option priorities)
 - [ ] /delete (last import, last n imports, all imports)
+- [ ] Tests (json, media)
 
 ## 🙏 Thanks
 

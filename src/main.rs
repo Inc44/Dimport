@@ -69,9 +69,14 @@ struct ImportOptions {
     range_end: Option<usize>,
     first: Option<usize>,
     last: Option<usize>,
+    outside: bool,
 }
 enum ImageSource {
     Local(PathBuf, String),
+    Remote(String),
+}
+enum AttachmentSource {
+    Local(PathBuf),
     Remote(String),
 }
 fn is_image_filename(filename: &str) -> bool {
@@ -274,6 +279,26 @@ fn collect_image_sources(
     }
     sources
 }
+fn collect_attachment_sources(
+    message: &MessageInfo,
+    file_index: &Option<FileIndex>,
+    seen_paths: &mut HashSet<PathBuf>,
+) -> Vec<AttachmentSource> {
+    let mut sources = Vec::new();
+    for attachment_info in &message.attachments {
+        let mut found_local = false;
+        if let Some(index) = file_index {
+            for (path, _) in find_file_variants(&attachment_info.file_name, index, seen_paths) {
+                sources.push(AttachmentSource::Local(path));
+                found_local = true;
+            }
+        }
+        if !found_local {
+            sources.push(AttachmentSource::Remote(attachment_info.url.clone()));
+        }
+    }
+    sources
+}
 async fn prepare_message_batch<'a>(
     images: &'a [ImageSource],
     base_embed: &serenity::CreateEmbed,
@@ -385,6 +410,72 @@ async fn send_image_messages(
         is_first_message_batch = false;
     }
 }
+async fn send_attachment_batch(
+    ctx: Context<'_>,
+    attachments: Vec<serenity::CreateAttachment>,
+    content: Option<String>,
+) {
+    let mut reply = CreateReply::default();
+    if let Some(c) = content {
+        reply = reply.content(c);
+    }
+    for att in attachments {
+        reply = reply.attachment(att);
+    }
+    let _ = ctx.send(reply).await;
+}
+async fn send_outside_message(
+    ctx: Context<'_>,
+    message: &MessageInfo,
+    base_embed: serenity::CreateEmbed,
+    attachment_sources: Vec<AttachmentSource>,
+    author_avatar_file: Option<(PathBuf, String)>,
+) {
+    let mut locals: Vec<serenity::CreateAttachment> = Vec::new();
+    let mut remotes: Vec<String> = Vec::new();
+    for source in attachment_sources {
+        match source {
+            AttachmentSource::Local(path) => {
+                if let Ok(attachment) = serenity::CreateAttachment::path(&path).await {
+                    locals.push(attachment);
+                }
+            }
+            AttachmentSource::Remote(url) => remotes.push(url),
+        }
+    }
+    let mut content = message.content.clone();
+    if !remotes.is_empty() {
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(&remotes.join("\n"));
+    }
+    let mut metadata_reply = CreateReply::default().embed(base_embed);
+    if let Some((path, _)) = &author_avatar_file {
+        if let Ok(attachment) = serenity::CreateAttachment::path(path).await {
+            metadata_reply = metadata_reply.attachment(attachment);
+        }
+    }
+    let _ = ctx.send(metadata_reply).await;
+    if !content.is_empty() || !locals.is_empty() {
+        let mut remaining_locals = locals;
+        let batch_content = if !content.is_empty() {
+            Some(content)
+        } else {
+            None
+        };
+        let batch_size = MAX_ATTACHMENTS_PER_MESSAGE.min(remaining_locals.len());
+        let batch: Vec<serenity::CreateAttachment> =
+            remaining_locals.drain(0..batch_size).collect();
+        send_attachment_batch(ctx, batch, batch_content).await;
+        while !remaining_locals.is_empty() {
+            let batch_size = MAX_ATTACHMENTS_PER_MESSAGE.min(remaining_locals.len());
+            let batch: Vec<serenity::CreateAttachment> =
+                remaining_locals.drain(0..batch_size).collect();
+            send_attachment_batch(ctx, batch, None).await;
+        }
+    }
+}
 async fn process_message(
     ctx: Context<'_>,
     message: &MessageInfo,
@@ -395,33 +486,55 @@ async fn process_message(
     no_category: bool,
     no_channel: bool,
     no_timestamp: bool,
+    outside: bool,
 ) {
     let author_avatar_file = file_index
         .as_ref()
         .and_then(|index| find_author_avatar_file(&message.author.id, index));
-    let image_sources = collect_image_sources(message, file_index, seen_paths);
-    let base_embed = create_base_embed(
-        message,
-        export,
-        author_avatar_file.as_ref().map(|(_, name)| name),
-        no_guild,
-        no_category,
-        no_channel,
-        no_timestamp,
-    );
-    if image_sources.is_empty() {
-        send_text_message(ctx, message, base_embed, &author_avatar_file).await;
-    } else {
-        let embed_url = format!("https://discord.com/users/{}", message.author.id);
-        send_image_messages(
+    if outside {
+        let attachment_sources = collect_attachment_sources(message, file_index, seen_paths);
+        let base_embed = create_base_embed(
+            message,
+            export,
+            author_avatar_file.as_ref().map(|(_, name)| name),
+            no_guild,
+            no_category,
+            no_channel,
+            no_timestamp,
+        );
+        send_outside_message(
             ctx,
             message,
             base_embed,
-            image_sources,
+            attachment_sources,
             author_avatar_file,
-            embed_url,
         )
         .await;
+    } else {
+        let image_sources = collect_image_sources(message, file_index, seen_paths);
+        let base_embed = create_base_embed(
+            message,
+            export,
+            author_avatar_file.as_ref().map(|(_, name)| name),
+            no_guild,
+            no_category,
+            no_channel,
+            no_timestamp,
+        );
+        if image_sources.is_empty() {
+            send_text_message(ctx, message, base_embed, &author_avatar_file).await;
+        } else {
+            let embed_url = format!("https://discord.com/users/{}", message.author.id);
+            send_image_messages(
+                ctx,
+                message,
+                base_embed,
+                image_sources,
+                author_avatar_file,
+                embed_url,
+            )
+            .await;
+        }
     }
 }
 fn load_export_data(json_path: &str) -> Result<Export, String> {
@@ -499,6 +612,7 @@ fn parse_import_options_from_arguments(arguments: &[String]) -> Result<ImportOpt
             "--no-category" => options.no_category = true,
             "--no-channel" => options.no_channel = true,
             "--no-timestamp" => options.no_timestamp = true,
+            "--outside" => options.outside = true,
             "--range" => {
                 index += 1;
                 if index < arguments.len() {
@@ -652,6 +766,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             options.no_category,
             options.no_channel,
             options.no_timestamp,
+            options.outside,
         )
         .await;
     }
