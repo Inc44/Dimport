@@ -71,12 +71,8 @@ struct ImportOptions {
     last: Option<usize>,
     outside: bool,
 }
-enum ImageSource {
+enum MediaSource {
     Local(PathBuf, String),
-    Remote(String),
-}
-enum AttachmentSource {
-    Local(PathBuf),
     Remote(String),
 }
 fn is_image_filename(filename: &str) -> bool {
@@ -254,14 +250,15 @@ fn find_file_variants(
     }
     found_files
 }
-fn collect_image_sources(
+fn collect_media_sources(
     message: &MessageInfo,
     file_index: &Option<FileIndex>,
     seen_paths: &mut HashSet<PathBuf>,
-) -> Vec<ImageSource> {
+    is_included: impl Fn(&AttachmentInfo) -> bool,
+) -> Vec<MediaSource> {
     let mut sources = Vec::new();
     for attachment_info in &message.attachments {
-        if !is_image_filename(&attachment_info.file_name) {
+        if !is_included(attachment_info) {
             continue;
         }
         let mut found_local = false;
@@ -269,38 +266,18 @@ fn collect_image_sources(
             for (path, filename) in
                 find_file_variants(&attachment_info.file_name, index, seen_paths)
             {
-                sources.push(ImageSource::Local(path, filename));
+                sources.push(MediaSource::Local(path, filename));
                 found_local = true;
             }
         }
         if !found_local {
-            sources.push(ImageSource::Remote(attachment_info.url.clone()));
-        }
-    }
-    sources
-}
-fn collect_attachment_sources(
-    message: &MessageInfo,
-    file_index: &Option<FileIndex>,
-    seen_paths: &mut HashSet<PathBuf>,
-) -> Vec<AttachmentSource> {
-    let mut sources = Vec::new();
-    for attachment_info in &message.attachments {
-        let mut found_local = false;
-        if let Some(index) = file_index {
-            for (path, _) in find_file_variants(&attachment_info.file_name, index, seen_paths) {
-                sources.push(AttachmentSource::Local(path));
-                found_local = true;
-            }
-        }
-        if !found_local {
-            sources.push(AttachmentSource::Remote(attachment_info.url.clone()));
+            sources.push(MediaSource::Remote(attachment_info.url.clone()));
         }
     }
     sources
 }
 async fn prepare_message_batch<'a>(
-    images: &'a [ImageSource],
+    images: &'a [MediaSource],
     base_embed: &serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
     is_first_message_batch: bool,
@@ -325,7 +302,7 @@ async fn prepare_message_batch<'a>(
         if embeds.len() >= MAX_EMBEDS_PER_MESSAGE {
             break;
         }
-        if let ImageSource::Local(_, _) = source {
+        if matches!(source, MediaSource::Local(..)) {
             if attachments.len() >= MAX_ATTACHMENTS_PER_MESSAGE {
                 break;
             }
@@ -341,7 +318,7 @@ async fn prepare_message_batch<'a>(
         };
         embed_builder = embed_builder.url(embed_url);
         match source {
-            ImageSource::Local(path, filename) => {
+            MediaSource::Local(path, filename) => {
                 if let Ok(attachment) = serenity::CreateAttachment::path(path).await {
                     attachments.push(attachment);
                     embed_builder = embed_builder.image(format!("attachment://{filename}"));
@@ -349,7 +326,7 @@ async fn prepare_message_batch<'a>(
                     continue;
                 }
             }
-            ImageSource::Remote(url) => {
+            MediaSource::Remote(url) => {
                 embed_builder = embed_builder.image(url.clone());
             }
         }
@@ -380,11 +357,11 @@ async fn send_image_messages(
     ctx: Context<'_>,
     message: &MessageInfo,
     base_embed: serenity::CreateEmbed,
-    image_sources: Vec<ImageSource>,
+    image_sources: Vec<MediaSource>,
     author_avatar_file: Option<(PathBuf, String)>,
     embed_url: String,
 ) {
-    let mut remaining_images: &[ImageSource] = &image_sources;
+    let mut remaining_images: &[MediaSource] = &image_sources;
     let mut is_first_message_batch = true;
     while !remaining_images.is_empty() {
         let (attachments, embeds, images_processed) = prepare_message_batch(
@@ -428,19 +405,19 @@ async fn send_outside_message(
     ctx: Context<'_>,
     message: &MessageInfo,
     base_embed: serenity::CreateEmbed,
-    attachment_sources: Vec<AttachmentSource>,
+    attachment_sources: Vec<MediaSource>,
     author_avatar_file: Option<(PathBuf, String)>,
 ) {
     let mut locals: Vec<serenity::CreateAttachment> = Vec::new();
     let mut remotes: Vec<String> = Vec::new();
     for source in attachment_sources {
         match source {
-            AttachmentSource::Local(path) => {
+            MediaSource::Local(path, _) => {
                 if let Ok(attachment) = serenity::CreateAttachment::path(&path).await {
                     locals.push(attachment);
                 }
             }
-            AttachmentSource::Remote(url) => remotes.push(url),
+            MediaSource::Remote(url) => remotes.push(url),
         }
     }
     let mut content = message.content.clone();
@@ -492,7 +469,7 @@ async fn process_message(
         .as_ref()
         .and_then(|index| find_author_avatar_file(&message.author.id, index));
     if outside {
-        let attachment_sources = collect_attachment_sources(message, file_index, seen_paths);
+        let attachment_sources = collect_media_sources(message, file_index, seen_paths, |_| true);
         let base_embed = create_base_embed(
             message,
             export,
@@ -511,7 +488,9 @@ async fn process_message(
         )
         .await;
     } else {
-        let image_sources = collect_image_sources(message, file_index, seen_paths);
+        let image_sources = collect_media_sources(message, file_index, seen_paths, |att| {
+            is_image_filename(&att.file_name)
+        });
         let base_embed = create_base_embed(
             message,
             export,
