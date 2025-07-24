@@ -73,6 +73,7 @@ struct ImportOptions {
     no_category: bool,
     no_channel: bool,
     no_timestamp: bool,
+    no_mentions: bool,
     range_start: Option<usize>,
     range_end: Option<usize>,
     first: Option<usize>,
@@ -284,7 +285,14 @@ fn collect_media_sources(
     }
     sources
 }
-fn replace_mentions_with_clickable(content: &str, mentions: &[Mention]) -> String {
+fn replace_mentions_with_clickable(
+    content: &str,
+    mentions: &[Mention],
+    no_mentions: bool,
+) -> String {
+    if no_mentions {
+        return content.to_string();
+    }
     let mut processed_content = content.to_string();
     for mention in mentions {
         let display_name = mention.nickname.as_deref().unwrap_or(&mention.name);
@@ -358,8 +366,9 @@ async fn send_text_message(
     message: &MessageInfo,
     base_embed: serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
+    no_mentions: bool,
 ) {
-    let content = replace_mentions_with_clickable(&message.content, &message.mentions);
+    let content = replace_mentions_with_clickable(&message.content, &message.mentions, no_mentions);
     if content.is_empty() && author_avatar_file.is_none() {
         return;
     }
@@ -379,8 +388,9 @@ async fn send_image_messages(
     image_sources: Vec<MediaSource>,
     author_avatar_file: Option<(PathBuf, String)>,
     embed_url: String,
+    no_mentions: bool,
 ) {
-    let content = replace_mentions_with_clickable(&message.content, &message.mentions);
+    let content = replace_mentions_with_clickable(&message.content, &message.mentions, no_mentions);
     let mut remaining_images: &[MediaSource] = &image_sources;
     let mut is_first_message_batch = true;
     while !remaining_images.is_empty() {
@@ -427,6 +437,7 @@ async fn send_outside_message(
     base_embed: serenity::CreateEmbed,
     attachment_sources: Vec<MediaSource>,
     author_avatar_file: Option<(PathBuf, String)>,
+    no_mentions: bool,
 ) {
     let mut locals: Vec<serenity::CreateAttachment> = Vec::new();
     let mut remotes: Vec<String> = Vec::new();
@@ -440,7 +451,8 @@ async fn send_outside_message(
             MediaSource::Remote(url) => remotes.push(url),
         }
     }
-    let mut content = replace_mentions_with_clickable(&message.content, &message.mentions);
+    let mut content =
+        replace_mentions_with_clickable(&message.content, &message.mentions, no_mentions);
     if !remotes.is_empty() {
         if !content.is_empty() {
             content.push('\n');
@@ -483,6 +495,7 @@ async fn process_message(
     no_category: bool,
     no_channel: bool,
     no_timestamp: bool,
+    no_mentions: bool,
     outside: bool,
 ) {
     let author_avatar_file = file_index
@@ -505,6 +518,7 @@ async fn process_message(
             base_embed,
             attachment_sources,
             author_avatar_file,
+            no_mentions,
         )
         .await;
     } else {
@@ -521,7 +535,7 @@ async fn process_message(
             no_timestamp,
         );
         if image_sources.is_empty() {
-            send_text_message(ctx, message, base_embed, &author_avatar_file).await;
+            send_text_message(ctx, message, base_embed, &author_avatar_file, no_mentions).await;
         } else {
             let embed_url = format!("https://discord.com/users/{}", message.author.id);
             send_image_messages(
@@ -531,6 +545,7 @@ async fn process_message(
                 image_sources,
                 author_avatar_file,
                 embed_url,
+                no_mentions,
             )
             .await;
         }
@@ -611,6 +626,7 @@ fn parse_import_options_from_arguments(arguments: &[String]) -> Result<ImportOpt
             "--no-category" => options.no_category = true,
             "--no-channel" => options.no_channel = true,
             "--no-timestamp" => options.no_timestamp = true,
+            "--no-mentions" => options.no_mentions = true,
             "--outside" => options.outside = true,
             "--range" => {
                 index += 1;
@@ -765,6 +781,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             options.no_category,
             options.no_channel,
             options.no_timestamp,
+            options.no_mentions,
             options.outside,
         )
         .await;
