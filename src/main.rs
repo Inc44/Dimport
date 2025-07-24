@@ -44,6 +44,7 @@ struct MessageInfo {
     #[serde(default)]
     timestamp_edited: Option<String>,
     attachments: Vec<AttachmentInfo>,
+    mentions: Vec<Mention>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +59,13 @@ struct Author {
 struct AttachmentInfo {
     url: String,
     file_name: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Mention {
+    id: serenity::UserId,
+    name: String,
+    nickname: Option<String>,
 }
 #[derive(Default)]
 struct ImportOptions {
@@ -276,6 +284,16 @@ fn collect_media_sources(
     }
     sources
 }
+fn replace_mentions_with_clickable(content: &str, mentions: &[Mention]) -> String {
+    let mut processed_content = content.to_string();
+    for mention in mentions {
+        let display_name = mention.nickname.as_deref().unwrap_or(&mention.name);
+        let mention_pattern = format!("@{}", display_name);
+        let clickable_mention = format!("<@{}>", mention.id);
+        processed_content = processed_content.replace(&mention_pattern, &clickable_mention);
+    }
+    processed_content
+}
 async fn prepare_message_batch<'a>(
     images: &'a [MediaSource],
     base_embed: &serenity::CreateEmbed,
@@ -341,10 +359,11 @@ async fn send_text_message(
     base_embed: serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
 ) {
-    if message.content.is_empty() && author_avatar_file.is_none() {
+    let content = replace_mentions_with_clickable(&message.content, &message.mentions);
+    if content.is_empty() && author_avatar_file.is_none() {
         return;
     }
-    let embed_builder = base_embed.description(&message.content);
+    let embed_builder = base_embed.description(&content);
     let mut reply = CreateReply::default().embed(embed_builder);
     if let Some((avatar_path, _)) = author_avatar_file {
         if let Ok(attachment) = serenity::CreateAttachment::path(avatar_path).await {
@@ -361,6 +380,7 @@ async fn send_image_messages(
     author_avatar_file: Option<(PathBuf, String)>,
     embed_url: String,
 ) {
+    let content = replace_mentions_with_clickable(&message.content, &message.mentions);
     let mut remaining_images: &[MediaSource] = &image_sources;
     let mut is_first_message_batch = true;
     while !remaining_images.is_empty() {
@@ -369,7 +389,7 @@ async fn send_image_messages(
             &base_embed,
             &author_avatar_file,
             is_first_message_batch,
-            &message.content,
+            &content,
             &embed_url,
         )
         .await;
@@ -420,7 +440,7 @@ async fn send_outside_message(
             MediaSource::Remote(url) => remotes.push(url),
         }
     }
-    let mut content = message.content.clone();
+    let mut content = replace_mentions_with_clickable(&message.content, &message.mentions);
     if !remotes.is_empty() {
         if !content.is_empty() {
             content.push('\n');
