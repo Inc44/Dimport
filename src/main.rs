@@ -6,11 +6,14 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
+use tokio::time;
 use walkdir::WalkDir;
 const SUPPORTED_IMAGE_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
 const MAX_EMBEDS_PER_MESSAGE: usize = 10;
 const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
+const MESSAGE_DELAY: Duration = Duration::from_millis(888);
 type FileIndex = HashMap<String, Vec<PathBuf>>;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -380,6 +383,7 @@ async fn send_text_message(
         }
     }
     let _ = ctx.send(reply).await;
+    time::sleep(MESSAGE_DELAY).await;
 }
 async fn send_image_messages(
     ctx: Context<'_>,
@@ -412,6 +416,7 @@ async fn send_image_messages(
                 reply = reply.attachment(attachment);
             }
             let _ = ctx.send(reply).await;
+            time::sleep(MESSAGE_DELAY).await;
         }
         remaining_images = &remaining_images[images_processed..];
         is_first_message_batch = false;
@@ -430,6 +435,7 @@ async fn send_attachment_batch(
         reply = reply.attachment(att);
     }
     let _ = ctx.send(reply).await;
+    time::sleep(MESSAGE_DELAY).await;
 }
 async fn send_outside_message(
     ctx: Context<'_>,
@@ -466,6 +472,7 @@ async fn send_outside_message(
         }
     }
     let _ = ctx.send(metadata_reply).await;
+    time::sleep(MESSAGE_DELAY).await;
     if !content.is_empty() || !locals.is_empty() {
         let mut remaining_locals = locals;
         let batch_content = if !content.is_empty() {
