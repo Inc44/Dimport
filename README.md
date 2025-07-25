@@ -75,7 +75,6 @@ Discord opens the browser when clicking on a user handle instead of doing the sa
 
 ## 🚧 TODO
 
-- [ ] Reactions (count, users)
 - [ ] Inline emojis
 - [ ] User banner color instead of their exported first role
 - [ ] Current user avatar

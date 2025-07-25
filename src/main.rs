@@ -95,6 +95,7 @@ struct ImportOptions {
     no_mentions: bool,
     no_reactions: bool,
     button: bool,
+    reaction_users: bool,
     range_start: Option<usize>,
     range_end: Option<usize>,
     first: Option<usize>,
@@ -317,6 +318,31 @@ fn get_reaction_count(reaction: &ReactionInfo) -> u64 {
         _ => 1,
     }
 }
+fn format_reaction_users(reactions: &[ReactionInfo]) -> String {
+    reactions
+        .iter()
+        .filter_map(|reaction| {
+            let user_mentions: Vec<String> = reaction
+                .users
+                .iter()
+                .filter_map(|user_value| {
+                    user_value
+                        .as_object()
+                        .and_then(|obj| obj.get("id"))
+                        .and_then(|id_val| id_val.as_str())
+                        .map(|id_str| format!("<@{}>", id_str))
+                })
+                .collect();
+            if user_mentions.is_empty() {
+                None
+            } else {
+                let emoji_display = reaction.emoji.name.clone();
+                Some(format!("{} : {}", emoji_display, user_mentions.join(", ")))
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
 fn create_buttons(reactions: &[ReactionInfo]) -> Vec<serenity::CreateButton> {
     reactions
         .iter()
@@ -430,6 +456,7 @@ async fn send_text_message(
     author_avatar_file: &Option<(PathBuf, String)>,
     no_mentions: bool,
     button: bool,
+    reaction_users: bool,
     reactions: &[ReactionInfo],
 ) -> Option<serenity::Message> {
     let content = replace_mentions(&message.content, &message.mentions, no_mentions);
@@ -451,6 +478,13 @@ async fn send_text_message(
     }
     let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
     time::sleep(MESSAGE_DELAY).await;
+    if reaction_users && !reactions.is_empty() {
+        let reaction_content = format_reaction_users(reactions);
+        if !reaction_content.is_empty() {
+            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
+            time::sleep(MESSAGE_DELAY).await;
+        }
+    }
     Some(msg)
 }
 async fn send_image_messages(
@@ -462,6 +496,7 @@ async fn send_image_messages(
     embed_url: String,
     no_mentions: bool,
     button: bool,
+    reaction_users: bool,
     reactions: &[ReactionInfo],
 ) -> Option<serenity::Message> {
     let content = replace_mentions(&message.content, &message.mentions, no_mentions);
@@ -499,6 +534,13 @@ async fn send_image_messages(
         remaining_images = &remaining_images[batch.count..];
         is_first_batch = false;
     }
+    if reaction_users && !reactions.is_empty() {
+        let reaction_content = format_reaction_users(reactions);
+        if !reaction_content.is_empty() {
+            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
+            time::sleep(MESSAGE_DELAY).await;
+        }
+    }
     last_msg
 }
 async fn send_attachment_batch(
@@ -533,6 +575,7 @@ async fn send_outside_message(
     author_avatar_file: Option<(PathBuf, String)>,
     no_mentions: bool,
     button: bool,
+    reaction_users: bool,
     reactions: &[ReactionInfo],
 ) -> Option<serenity::Message> {
     let mut locals: Vec<serenity::CreateAttachment> = Vec::new();
@@ -603,6 +646,13 @@ async fn send_outside_message(
             }
         }
     }
+    if reaction_users && !reactions.is_empty() {
+        let reaction_content = format_reaction_users(reactions);
+        if !reaction_content.is_empty() {
+            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
+            time::sleep(MESSAGE_DELAY).await;
+        }
+    }
     final_msg
 }
 async fn add_reactions(ctx: Context<'_>, message: &serenity::Message, reactions: &[ReactionInfo]) {
@@ -625,6 +675,7 @@ async fn process_message(
     no_mentions: bool,
     no_reactions: bool,
     button: bool,
+    reaction_users: bool,
     outside: bool,
 ) {
     let author_avatar_file = file_index
@@ -649,6 +700,7 @@ async fn process_message(
             author_avatar_file,
             no_mentions,
             button,
+            reaction_users,
             &message.reactions,
         )
         .await
@@ -673,6 +725,7 @@ async fn process_message(
                 &author_avatar_file,
                 no_mentions,
                 button,
+                reaction_users,
                 &message.reactions,
             )
             .await
@@ -688,6 +741,7 @@ async fn process_message(
                 embed_url,
                 no_mentions,
                 button,
+                reaction_users,
                 &message.reactions,
             )
             .await
@@ -777,6 +831,7 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
             "--no-mentions" => options.no_mentions = true,
             "--no-reactions" => options.no_reactions = true,
             "--button" => options.button = true,
+            "--reaction-users" => options.reaction_users = true,
             "--outside" => options.outside = true,
             "--range" => {
                 index += 1;
@@ -937,6 +992,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             options.no_mentions,
             options.no_reactions,
             options.button,
+            options.reaction_users,
             options.outside,
         )
         .await;
