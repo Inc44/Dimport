@@ -101,6 +101,7 @@ struct ImportOptions {
     first: Option<usize>,
     last: Option<usize>,
     outside: bool,
+    disable_button: bool,
 }
 enum MediaSource {
     Local(PathBuf, String),
@@ -343,7 +344,7 @@ fn format_reaction_users(reactions: &[ReactionInfo]) -> String {
         .collect::<Vec<String>>()
         .join("\n")
 }
-fn create_buttons(reactions: &[ReactionInfo]) -> Vec<serenity::CreateButton> {
+fn create_buttons(reactions: &[ReactionInfo], disable_button: bool) -> Vec<serenity::CreateButton> {
     reactions
         .iter()
         .map(|reaction| {
@@ -362,10 +363,14 @@ fn create_buttons(reactions: &[ReactionInfo]) -> Vec<serenity::CreateButton> {
             };
             let count = get_reaction_count(reaction);
             let label = format!("\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}{count}");
-            serenity::CreateButton::new(format!("dummy_reaction_{}", reaction.emoji.code))
+            let mut button = serenity::CreateButton::new(format!("dummy_reaction_{}", reaction.emoji.code))
                 .emoji(serenity::ReactionType::Unicode(emoji_str))
                 .label(label)
-                .style(serenity::ButtonStyle::Secondary)
+                .style(serenity::ButtonStyle::Secondary);
+            if disable_button {
+                button = button.disabled(true);
+            }
+            button
         })
         .collect()
 }
@@ -458,6 +463,7 @@ async fn send_text_message(
     button: bool,
     reaction_users: bool,
     reactions: &[ReactionInfo],
+    disable_button: bool,
 ) -> Option<serenity::Message> {
     let content = replace_mentions(&message.content, &message.mentions, no_mentions);
     if content.is_empty() && author_avatar_file.is_none() {
@@ -471,7 +477,7 @@ async fn send_text_message(
         }
     }
     if button && !reactions.is_empty() {
-        let buttons = create_buttons(reactions);
+        let buttons = create_buttons(reactions, disable_button);
         if !buttons.is_empty() {
             reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
         }
@@ -498,6 +504,7 @@ async fn send_image_messages(
     button: bool,
     reaction_users: bool,
     reactions: &[ReactionInfo],
+    disable_button: bool,
 ) -> Option<serenity::Message> {
     let content = replace_mentions(&message.content, &message.mentions, no_mentions);
     let mut remaining_images: &[MediaSource] = &image_sources;
@@ -522,7 +529,7 @@ async fn send_image_messages(
                 reply = reply.attachment(attachment);
             }
             if button && !reactions.is_empty() && remaining_images.len() <= batch.count {
-                let buttons = create_buttons(reactions);
+                let buttons = create_buttons(reactions, disable_button);
                 if !buttons.is_empty() {
                     reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
                 }
@@ -549,6 +556,7 @@ async fn send_attachment_batch(
     content: Option<String>,
     button: bool,
     reactions: &[ReactionInfo],
+    disable_button: bool,
 ) -> Option<serenity::Message> {
     let mut reply = poise::CreateReply::default();
     if let Some(c) = content {
@@ -558,7 +566,7 @@ async fn send_attachment_batch(
         reply = reply.attachment(att);
     }
     if button && !reactions.is_empty() {
-        let buttons = create_buttons(reactions);
+        let buttons = create_buttons(reactions, disable_button);
         if !buttons.is_empty() {
             reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
         }
@@ -577,6 +585,7 @@ async fn send_outside_message(
     button: bool,
     reaction_users: bool,
     reactions: &[ReactionInfo],
+    disable_button: bool,
 ) -> Option<serenity::Message> {
     let mut locals: Vec<serenity::CreateAttachment> = Vec::new();
     let mut remotes: Vec<String> = Vec::new();
@@ -622,7 +631,9 @@ async fn send_outside_message(
         let batch_size = MAX_ATTACHMENTS.min(remaining_locals.len());
         let batch: Vec<serenity::CreateAttachment> =
             remaining_locals.drain(0..batch_size).collect();
-        if let Some(msg) = send_attachment_batch(ctx, batch, batch_content, button, reactions).await
+        if let Some(msg) =
+            send_attachment_batch(ctx, batch, batch_content, button, reactions, disable_button)
+                .await
         {
             last_attachment_msg = Some(msg);
         }
@@ -630,7 +641,9 @@ async fn send_outside_message(
             let batch_size = MAX_ATTACHMENTS.min(remaining_locals.len());
             let batch: Vec<serenity::CreateAttachment> =
                 remaining_locals.drain(0..batch_size).collect();
-            if let Some(msg) = send_attachment_batch(ctx, batch, None, button, reactions).await {
+            if let Some(msg) =
+                send_attachment_batch(ctx, batch, None, button, reactions, disable_button).await
+            {
                 last_attachment_msg = Some(msg);
             }
         }
@@ -638,7 +651,7 @@ async fn send_outside_message(
     let final_msg = last_attachment_msg.or(Some(metadata_msg));
     if let Some(msg) = &final_msg {
         if button && !reactions.is_empty() {
-            let buttons = create_buttons(reactions);
+            let buttons = create_buttons(reactions, disable_button);
             if !buttons.is_empty() {
                 let edit_builder = serenity::EditMessage::new()
                     .components(vec![serenity::CreateActionRow::Buttons(buttons)]);
@@ -677,6 +690,7 @@ async fn process_message(
     button: bool,
     reaction_users: bool,
     outside: bool,
+    disable_button: bool,
 ) {
     let author_avatar_file = file_index
         .as_ref()
@@ -702,6 +716,7 @@ async fn process_message(
             button,
             reaction_users,
             &message.reactions,
+            disable_button,
         )
         .await
     } else {
@@ -727,6 +742,7 @@ async fn process_message(
                 button,
                 reaction_users,
                 &message.reactions,
+                disable_button,
             )
             .await
         } else {
@@ -743,6 +759,7 @@ async fn process_message(
                 button,
                 reaction_users,
                 &message.reactions,
+                disable_button,
             )
             .await
         }
@@ -833,6 +850,7 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
             "--button" => options.button = true,
             "--reaction-users" => options.reaction_users = true,
             "--outside" => options.outside = true,
+            "--disable-button" => options.disable_button = true,
             "--range" => {
                 index += 1;
                 if index < arguments.len() {
@@ -909,6 +927,9 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
     }
     if options.no_reactions && options.button {
         return Err("--no-reactions and --button cannot be used together".to_string());
+    }
+    if options.disable_button && !options.button {
+        return Err("--disable-button can only be used with --button".to_string());
     }
     Ok(options)
 }
@@ -994,6 +1015,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             options.button,
             options.reaction_users,
             options.outside,
+            options.disable_button,
         )
         .await;
     }
