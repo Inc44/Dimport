@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 const SUPPORTED_IMAGE_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
 const MAX_EMBEDS_PER_MESSAGE: usize = 10;
 const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
-const MESSAGE_DELAY: Duration = Duration::from_millis(888);
+const MESSAGE_DELAY: Duration = Duration::from_millis(100);
 type FileIndex = HashMap<String, Vec<PathBuf>>;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -48,6 +48,7 @@ struct MessageInfo {
     timestamp_edited: Option<String>,
     attachments: Vec<AttachmentInfo>,
     mentions: Vec<Mention>,
+    reactions: Vec<ReactionInfo>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +71,22 @@ struct Mention {
     name: String,
     nickname: Option<String>,
 }
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ReactionInfo {
+    emoji: EmojiInfo,
+    count: serde_json::Value,
+    users: Vec<serde_json::Value>,
+}
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct EmojiInfo {
+    id: Option<String>,
+    name: String,
+    code: String,
+    is_animated: bool,
+    image_url: String,
+}
 #[derive(Default)]
 struct ImportOptions {
     no_guild: bool,
@@ -77,6 +94,8 @@ struct ImportOptions {
     no_channel: bool,
     no_timestamp: bool,
     no_mentions: bool,
+    no_reactions: bool,
+    button: bool,
     range_start: Option<usize>,
     range_end: Option<usize>,
     first: Option<usize>,
@@ -305,13 +324,70 @@ fn replace_mentions_with_clickable(
     }
     processed_content
 }
-async fn prepare_message_batch<'a>(
-    images: &'a [MediaSource],
+fn get_reaction_count(reaction: &ReactionInfo) -> u64 {
+    match &reaction.count {
+        serde_json::Value::Number(n) => n.as_u64().unwrap_or(1),
+        _ => 1,
+    }
+}
+fn create_reaction_buttons(reactions: &[ReactionInfo]) -> Vec<serenity::CreateButton> {
+    reactions
+        .iter()
+        .take(10)
+        .map(|reaction| {
+            let emoji_str = if let Some(id_str) = &reaction.emoji.id {
+                if let Ok(_id) = id_str.parse::<u64>() {
+                    if reaction.emoji.is_animated {
+                        format!("<a:{}:{}>", reaction.emoji.name, id_str)
+                    } else {
+                        format!("<:{}:{}>", reaction.emoji.name, id_str)
+                    }
+                } else {
+                    reaction.emoji.name.clone()
+                }
+            } else {
+                reaction.emoji.name.clone()
+            };
+            let count = get_reaction_count(reaction);
+            let label = count.to_string();
+            serenity::CreateButton::new(format!("dummy_reaction_{}", reaction.emoji.code))
+                .emoji(serenity::ReactionType::Unicode(emoji_str))
+                .label(label)
+                .style(serenity::ButtonStyle::Secondary)
+        })
+        .collect()
+}
+fn create_reactions_vec(reactions: &[ReactionInfo]) -> Vec<serenity::ReactionType> {
+    reactions
+        .iter()
+        .take(10)
+        .filter_map(|reaction| {
+            if let Some(id_str) = &reaction.emoji.id {
+                if let Ok(id) = id_str.parse::<u64>() {
+                    let emoji_id = serenity::EmojiId::new(id);
+                    Some(serenity::ReactionType::Custom {
+                        animated: reaction.emoji.is_animated,
+                        id: emoji_id,
+                        name: Some(reaction.emoji.name.clone()),
+                    })
+                } else {
+                    Some(serenity::ReactionType::Unicode(reaction.emoji.name.clone()))
+                }
+            } else {
+                Some(serenity::ReactionType::Unicode(reaction.emoji.name.clone()))
+            }
+        })
+        .collect()
+}
+async fn prepare_message_batch(
+    images: &[MediaSource],
     base_embed: &serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
     is_first_message_batch: bool,
     content: &str,
     embed_url: &str,
+    _reactions: &[ReactionInfo],
+    _no_reactions: bool,
 ) -> (
     Vec<serenity::CreateAttachment>,
     Vec<serenity::CreateEmbed>,
@@ -370,10 +446,13 @@ async fn send_text_message(
     base_embed: serenity::CreateEmbed,
     author_avatar_file: &Option<(PathBuf, String)>,
     no_mentions: bool,
-) {
+    _no_reactions: bool,
+    button: bool,
+    reactions: &[ReactionInfo],
+) -> Option<serenity::Message> {
     let content = replace_mentions_with_clickable(&message.content, &message.mentions, no_mentions);
     if content.is_empty() && author_avatar_file.is_none() {
-        return;
+        return None;
     }
     let embed_builder = base_embed.description(&content);
     let mut reply = CreateReply::default().embed(embed_builder);
@@ -382,8 +461,15 @@ async fn send_text_message(
             reply = reply.attachment(attachment);
         }
     }
-    let _ = ctx.send(reply).await;
+    if button && !reactions.is_empty() {
+        let buttons = create_reaction_buttons(reactions);
+        if !buttons.is_empty() {
+            reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
+        }
+    }
+    let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
     time::sleep(MESSAGE_DELAY).await;
+    Some(msg)
 }
 async fn send_image_messages(
     ctx: Context<'_>,
@@ -393,10 +479,14 @@ async fn send_image_messages(
     author_avatar_file: Option<(PathBuf, String)>,
     embed_url: String,
     no_mentions: bool,
-) {
+    _no_reactions: bool,
+    button: bool,
+    reactions: &[ReactionInfo],
+) -> Option<serenity::Message> {
     let content = replace_mentions_with_clickable(&message.content, &message.mentions, no_mentions);
     let mut remaining_images: &[MediaSource] = &image_sources;
     let mut is_first_message_batch = true;
+    let mut last_msg: Option<serenity::Message> = None;
     while !remaining_images.is_empty() {
         let (attachments, embeds, images_processed) = prepare_message_batch(
             remaining_images,
@@ -405,6 +495,8 @@ async fn send_image_messages(
             is_first_message_batch,
             &content,
             &embed_url,
+            reactions,
+            _no_reactions,
         )
         .await;
         if !embeds.is_empty() {
@@ -415,18 +507,30 @@ async fn send_image_messages(
             for attachment in attachments {
                 reply = reply.attachment(attachment);
             }
-            let _ = ctx.send(reply).await;
+            if button && !reactions.is_empty() && remaining_images.len() <= images_processed {
+                let buttons = create_reaction_buttons(reactions);
+                if !buttons.is_empty() {
+                    reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
+                }
+            }
+            let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
+            last_msg = Some(msg);
             time::sleep(MESSAGE_DELAY).await;
         }
         remaining_images = &remaining_images[images_processed..];
         is_first_message_batch = false;
     }
+    last_msg
 }
 async fn send_attachment_batch(
     ctx: Context<'_>,
     attachments: Vec<serenity::CreateAttachment>,
     content: Option<String>,
-) {
+    _reactions: &[ReactionInfo],
+    _no_reactions: bool,
+    button: bool,
+    reactions: &[ReactionInfo],
+) -> Option<serenity::Message> {
     let mut reply = CreateReply::default();
     if let Some(c) = content {
         reply = reply.content(c);
@@ -434,8 +538,15 @@ async fn send_attachment_batch(
     for att in attachments {
         reply = reply.attachment(att);
     }
-    let _ = ctx.send(reply).await;
+    if button && !reactions.is_empty() {
+        let buttons = create_reaction_buttons(reactions);
+        if !buttons.is_empty() {
+            reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
+        }
+    }
+    let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
     time::sleep(MESSAGE_DELAY).await;
+    Some(msg)
 }
 async fn send_outside_message(
     ctx: Context<'_>,
@@ -444,7 +555,10 @@ async fn send_outside_message(
     attachment_sources: Vec<MediaSource>,
     author_avatar_file: Option<(PathBuf, String)>,
     no_mentions: bool,
-) {
+    _no_reactions: bool,
+    button: bool,
+    reactions: &[ReactionInfo],
+) -> Option<serenity::Message> {
     let mut locals: Vec<serenity::CreateAttachment> = Vec::new();
     let mut remotes: Vec<String> = Vec::new();
     for source in attachment_sources {
@@ -471,8 +585,15 @@ async fn send_outside_message(
             metadata_reply = metadata_reply.attachment(attachment);
         }
     }
-    let _ = ctx.send(metadata_reply).await;
+    let metadata_msg = ctx
+        .send(metadata_reply)
+        .await
+        .ok()?
+        .into_message()
+        .await
+        .ok()?;
     time::sleep(MESSAGE_DELAY).await;
+    let mut last_attachment_msg: Option<serenity::Message> = None;
     if !content.is_empty() || !locals.is_empty() {
         let mut remaining_locals = locals;
         let batch_content = if !content.is_empty() {
@@ -483,13 +604,60 @@ async fn send_outside_message(
         let batch_size = MAX_ATTACHMENTS_PER_MESSAGE.min(remaining_locals.len());
         let batch: Vec<serenity::CreateAttachment> =
             remaining_locals.drain(0..batch_size).collect();
-        send_attachment_batch(ctx, batch, batch_content).await;
+        if let Some(msg) = send_attachment_batch(
+            ctx,
+            batch,
+            batch_content,
+            reactions,
+            _no_reactions,
+            button,
+            reactions,
+        )
+        .await
+        {
+            last_attachment_msg = Some(msg);
+        }
         while !remaining_locals.is_empty() {
             let batch_size = MAX_ATTACHMENTS_PER_MESSAGE.min(remaining_locals.len());
             let batch: Vec<serenity::CreateAttachment> =
                 remaining_locals.drain(0..batch_size).collect();
-            send_attachment_batch(ctx, batch, None).await;
+            if let Some(msg) = send_attachment_batch(
+                ctx,
+                batch,
+                None,
+                reactions,
+                _no_reactions,
+                button,
+                reactions,
+            )
+            .await
+            {
+                last_attachment_msg = Some(msg);
+            }
         }
+    }
+    let final_msg = last_attachment_msg.or(Some(metadata_msg));
+    if let Some(msg) = &final_msg {
+        if button && !reactions.is_empty() {
+            let buttons = create_reaction_buttons(reactions);
+            if !buttons.is_empty() {
+                let edit_builder = serenity::EditMessage::new()
+                    .components(vec![serenity::CreateActionRow::Buttons(buttons)]);
+                let _ = msg.clone().edit(ctx, edit_builder).await;
+            }
+        }
+    }
+    final_msg
+}
+async fn add_reactions_to_message(
+    ctx: Context<'_>,
+    message: &serenity::Message,
+    reactions: &[ReactionInfo],
+) {
+    let reaction_types = create_reactions_vec(reactions);
+    for reaction_type in reaction_types {
+        let _ = message.react(&ctx, reaction_type).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
 }
 async fn process_message(
@@ -503,12 +671,14 @@ async fn process_message(
     no_channel: bool,
     no_timestamp: bool,
     no_mentions: bool,
+    no_reactions: bool,
+    button: bool,
     outside: bool,
 ) {
     let author_avatar_file = file_index
         .as_ref()
         .and_then(|index| find_author_avatar_file(&message.author.id, index));
-    if outside {
+    let last_sent_message = if outside {
         let attachment_sources = collect_media_sources(message, file_index, seen_paths, |_| true);
         let base_embed = create_base_embed(
             message,
@@ -526,8 +696,11 @@ async fn process_message(
             attachment_sources,
             author_avatar_file,
             no_mentions,
+            no_reactions,
+            button,
+            &message.reactions,
         )
-        .await;
+        .await
     } else {
         let image_sources = collect_media_sources(message, file_index, seen_paths, |att| {
             is_image_filename(&att.file_name)
@@ -542,9 +715,20 @@ async fn process_message(
             no_timestamp,
         );
         if image_sources.is_empty() {
-            send_text_message(ctx, message, base_embed, &author_avatar_file, no_mentions).await;
+            send_text_message(
+                ctx,
+                message,
+                base_embed,
+                &author_avatar_file,
+                no_mentions,
+                no_reactions,
+                button,
+                &message.reactions,
+            )
+            .await
         } else {
-            let embed_url = format!("https://discord.com/users/{}", message.author.id);
+            let author_id = message.author.id;
+            let embed_url = format!("https://discord.com/users/{author_id}");
             send_image_messages(
                 ctx,
                 message,
@@ -553,8 +737,16 @@ async fn process_message(
                 author_avatar_file,
                 embed_url,
                 no_mentions,
+                no_reactions,
+                button,
+                &message.reactions,
             )
-            .await;
+            .await
+        }
+    };
+    if let Some(sent_msg) = last_sent_message {
+        if !button && !no_reactions && !message.reactions.is_empty() {
+            add_reactions_to_message(ctx, &sent_msg, &message.reactions).await;
         }
     }
 }
@@ -634,6 +826,8 @@ fn parse_import_options_from_arguments(arguments: &[String]) -> Result<ImportOpt
             "--no-channel" => options.no_channel = true,
             "--no-timestamp" => options.no_timestamp = true,
             "--no-mentions" => options.no_mentions = true,
+            "--no-reactions" => options.no_reactions = true,
+            "--button" => options.button = true,
             "--outside" => options.outside = true,
             "--range" => {
                 index += 1;
@@ -708,6 +902,9 @@ fn parse_import_options_from_arguments(arguments: &[String]) -> Result<ImportOpt
             unknown => return Err(format!("Unknown option: {unknown}")),
         }
         index += 1;
+    }
+    if options.no_reactions && options.button {
+        return Err("--no-reactions and --button cannot be used together".to_string());
     }
     Ok(options)
 }
@@ -789,6 +986,8 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             options.no_channel,
             options.no_timestamp,
             options.no_mentions,
+            options.no_reactions,
+            options.button,
             options.outside,
         )
         .await;
