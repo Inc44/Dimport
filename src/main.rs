@@ -94,6 +94,7 @@ struct ImportOptions {
     no_timestamp: bool,
     no_mentions: bool,
     no_reactions: bool,
+    no_embed: bool,
     button: bool,
     reaction_users: bool,
     range_start: Option<usize>,
@@ -578,7 +579,7 @@ async fn send_attachment_batch(
 async fn send_outside_message(
     ctx: Context<'_>,
     message: &MessageInfo,
-    base_embed: serenity::CreateEmbed,
+    base_embed: Option<serenity::CreateEmbed>,
     attachment_sources: Vec<MediaSource>,
     author_avatar_file: Option<(PathBuf, String)>,
     no_mentions: bool,
@@ -606,21 +607,24 @@ async fn send_outside_message(
         }
         content.push_str(&remotes.join("\n"));
     }
-    let mut metadata_reply = poise::CreateReply::default().embed(base_embed);
-    if let Some((path, _)) = &author_avatar_file {
-        if let Ok(attachment) = serenity::CreateAttachment::path(path).await {
-            metadata_reply = metadata_reply.attachment(attachment);
-        }
-    }
-    let metadata_msg = ctx
-        .send(metadata_reply)
-        .await
-        .ok()?
-        .into_message()
-        .await
-        .ok()?;
-    time::sleep(MESSAGE_DELAY).await;
     let mut last_attachment_msg: Option<serenity::Message> = None;
+    if let Some(embed) = base_embed {
+        let mut metadata_reply = poise::CreateReply::default().embed(embed);
+        if let Some((path, _)) = &author_avatar_file {
+            if let Ok(attachment) = serenity::CreateAttachment::path(path).await {
+                metadata_reply = metadata_reply.attachment(attachment);
+            }
+        }
+        let metadata_msg = ctx
+            .send(metadata_reply)
+            .await
+            .ok()?
+            .into_message()
+            .await
+            .ok()?;
+        time::sleep(MESSAGE_DELAY).await;
+        last_attachment_msg = Some(metadata_msg);
+    }
     if !content.is_empty() || !locals.is_empty() {
         let mut remaining_locals = locals;
         let batch_content = if !content.is_empty() {
@@ -648,8 +652,7 @@ async fn send_outside_message(
             }
         }
     }
-    let final_msg = last_attachment_msg.or(Some(metadata_msg));
-    if let Some(msg) = &final_msg {
+    if let Some(msg) = &last_attachment_msg {
         if button && !reactions.is_empty() {
             let buttons = create_buttons(reactions, disable_button);
             if !buttons.is_empty() {
@@ -666,7 +669,7 @@ async fn send_outside_message(
             time::sleep(MESSAGE_DELAY).await;
         }
     }
-    final_msg
+    last_attachment_msg
 }
 async fn add_reactions(ctx: Context<'_>, message: &serenity::Message, reactions: &[ReactionInfo]) {
     let reaction_types = create_reactions(reactions);
@@ -687,25 +690,34 @@ async fn process_message(
     no_timestamp: bool,
     no_mentions: bool,
     no_reactions: bool,
+    no_embed: bool,
     button: bool,
     reaction_users: bool,
     outside: bool,
     disable_button: bool,
 ) {
-    let author_avatar_file = file_index
-        .as_ref()
-        .and_then(|index| find_avatar(&message.author.id, index));
+    let author_avatar_file = if no_embed {
+        None
+    } else {
+        file_index
+            .as_ref()
+            .and_then(|index| find_avatar(&message.author.id, index))
+    };
     let last_sent_message = if outside {
         let attachment_sources = collect_sources(message, file_index, seen_paths, |_| true);
-        let base_embed = create_embed_base(
-            message,
-            export,
-            author_avatar_file.as_ref().map(|(_, name)| name),
-            no_guild,
-            no_category,
-            no_channel,
-            no_timestamp,
-        );
+        let base_embed = if no_embed {
+            None
+        } else {
+            Some(create_embed_base(
+                message,
+                export,
+                author_avatar_file.as_ref().map(|(_, name)| name),
+                no_guild,
+                no_category,
+                no_channel,
+                no_timestamp,
+            ))
+        };
         send_outside_message(
             ctx,
             message,
@@ -847,6 +859,7 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
             "--no-timestamp" => options.no_timestamp = true,
             "--no-mentions" => options.no_mentions = true,
             "--no-reactions" => options.no_reactions = true,
+            "--no-embed" => options.no_embed = true,
             "--button" => options.button = true,
             "--reaction-users" => options.reaction_users = true,
             "--outside" => options.outside = true,
@@ -931,6 +944,9 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
     if options.disable_button && !options.button {
         return Err("--disable-button can only be used with --button".to_string());
     }
+    if options.no_embed && !options.outside {
+        return Err("--no-embed can only be used with --outside".to_string());
+    }
     Ok(options)
 }
 #[poise::command(prefix_command)]
@@ -1012,6 +1028,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             options.no_timestamp,
             options.no_mentions,
             options.no_reactions,
+            options.no_embed,
             options.button,
             options.reaction_users,
             options.outside,
