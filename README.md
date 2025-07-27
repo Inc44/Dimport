@@ -119,7 +119,6 @@ Discord bots can't react with the same emoji types multiple times to the message
 - [ ] (edited)
 - [ ] User banner color instead of their exported first role
 - [ ] Current user avatar
-- [ ] Write docs/wiki (option priorities)
 - [ ] /delete (last import, last n imports, all imports)
 - [ ] Tests (json, media)
 
