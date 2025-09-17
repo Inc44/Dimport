@@ -1,6 +1,6 @@
 [package]
 name = "Dimport"
-version = "2025.7.27"
+version = "2025.9.17"
 edition = "2021"
 
 [dependencies]

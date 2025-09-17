@@ -1,3 +1,33 @@
+# 2025.09.17
+
+Registered slash commands.
+
+# 2025.07.27
+
+Created wiki explaining how to install and configure this software.
+
+Added flag: `--no-embed`.
+
+# 2025.07.26
+
+Added flag: `--disable-button`.
+
+# 2025.07.25
+
+Found proper time interval by trial and error.
+
+# 2025.07.24
+
+Added mentions of users.
+
+Added flag: `--no-mentions`.
+
+# 2025.07.17
+
+Added a way to add attachments outside embeds.
+
+Added flag: `--outside`.
+
 # 2025.07.16
 
 `/import` called without flags fixed.

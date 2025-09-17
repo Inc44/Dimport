@@ -949,7 +949,7 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
     }
     Ok(options)
 }
-#[poise::command(prefix_command)]
+#[poise::command(prefix_command, slash_command)]
 async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
     let argument_tokens = split_args(&args);
     if argument_tokens.is_empty() || argument_tokens[0].trim().is_empty() {
@@ -1054,7 +1054,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
     let _ = ctx.say(message).await?;
     Ok(())
 }
-#[poise::command(prefix_command)]
+#[poise::command(prefix_command, slash_command)]
 async fn cancel(ctx: Context<'_>) -> Result<(), Error> {
     let should_cancel;
     {
