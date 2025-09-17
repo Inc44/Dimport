@@ -113,6 +113,8 @@ Discord opens the browser when clicking on a user handle instead of doing the sa
 
 Discord bots can't react with the same emoji types multiple times to the message, so for mimicking multiple reactions, you can use `--button`. However, Discord does not support changing button text on click natively, so the button's reaction count doesn't change. Also, to avoid getting "Button interaction failed," you can freeze/disable buttons to make them unclickable using `--disable-button`, which unfortunately makes them grayed out. If you do not want to import reactions, you can use `--no-reactions`. So, good luck choosing your poison.
 
+`/import` can't be registered as a slash command because it has too many flags or options.
+
 ## 🚧 TODO
 
 - [ ] Inline emojis (messages, reactions, buttons)

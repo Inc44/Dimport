@@ -1,3 +1,9 @@
+# 2025.09.18
+
+Added proper Discord token handling.
+
+Fixed slash command.
+
 # 2025.09.17
 
 Registered slash commands.

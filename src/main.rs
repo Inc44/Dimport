@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -949,7 +950,7 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
     }
     Ok(options)
 }
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command)]
 async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
     let argument_tokens = split_args(&args);
     if argument_tokens.is_empty() || argument_tokens[0].trim().is_empty() {
@@ -1073,10 +1074,56 @@ async fn cancel(ctx: Context<'_>) -> Result<(), Error> {
     }
     Ok(())
 }
+fn ask_token() -> String {
+    print!("Enter DISCORD_TOKEN: ");
+    let _ = io::stdout().flush();
+    let mut token = String::new();
+    io::stdin()
+        .read_line(&mut token)
+        .expect("stdin read failed");
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        panic!("DISCORD_TOKEN is required");
+    }
+    token
+}
+fn save_token(token: &str) -> io::Result<()> {
+    let path = Path::new(".env");
+    let token_line = format!("DISCORD_TOKEN={}\n", token);
+    if path.exists() {
+        let content = fs::read_to_string(path)?;
+        let mut replaced_token = false;
+        let mut token_lines = String::new();
+        for line in content.lines() {
+            if line.starts_with("DISCORD_TOKEN=") {
+                token_lines.push_str(&token_line);
+                replaced_token = true;
+            } else {
+                token_lines.push_str(line);
+                token_lines.push('\n');
+            }
+        }
+        if !replaced_token {
+            token_lines.push_str(&token_line);
+        }
+        fs::write(path, token_lines)?;
+    } else {
+        fs::write(path, token_line)?;
+    }
+    Ok(())
+}
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     dotenvy::dotenv().ok();
-    let token = env::var("DISCORD_TOKEN").expect("Expected DISCORD_TOKEN in environment");
+    let token = match env::var("DISCORD_TOKEN") {
+        Ok(token) => token,
+        Err(_) => {
+            let token = ask_token();
+            let _ = save_token(&token);
+            env::set_var("DISCORD_TOKEN", &token);
+            token
+        }
+    };
     let intents = serenity::GatewayIntents::GUILD_MESSAGES
         | serenity::GatewayIntents::DIRECT_MESSAGES
         | serenity::GatewayIntents::MESSAGE_CONTENT;
@@ -1101,6 +1148,14 @@ async fn main() -> Result<(), Error> {
         .framework(framework)
         .await
         .expect("Error creating client");
-    client.start().await.expect("Error running client");
+    if let Err(e) = client.start().await {
+        match e {
+            serenity::Error::Gateway(serenity::GatewayError::InvalidAuthentication) => {
+                eprintln!("Expected valid DISCORD_TOKEN in environment");
+                std::process::exit(1);
+            }
+            other => return Err(other.into()),
+        }
+    }
     Ok(())
 }
