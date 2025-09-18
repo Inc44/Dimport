@@ -1,5 +1,7 @@
 # 2025.09.18
 
+Accepts HTTP/HTTPS input JSON.
+
 Added `/help`.
 
 Added proper Discord token handling.

@@ -122,6 +122,25 @@ fn is_image_file(filename: &str) -> bool {
 fn parse_color(hex: &str) -> Option<u32> {
     u32::from_str_radix(hex.trim_start_matches('#'), 16).ok()
 }
+fn is_url(path: &str) -> bool {
+    path.starts_with("http://") || path.starts_with("https://")
+}
+fn extract_export_name(json_path: &str) -> String {
+    if is_url(json_path) {
+        let json_path_last_segment = json_path.rsplit('/').next().unwrap_or("");
+        Path::new(json_path_last_segment)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        Path::new(json_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    }
+}
 fn scan_files(paths: &[PathBuf]) -> FileIndex {
     let mut index = FileIndex::new();
     for root in paths {
@@ -171,11 +190,8 @@ fn locate_media_dirs(media_root: &Path, export_name: &str) -> Vec<PathBuf> {
 }
 fn create_file_index(media_path: &Option<String>, json_path: &str) -> Option<FileIndex> {
     media_path.as_ref().map(|path_str| {
-        let export_name = Path::new(json_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        let search_paths = locate_media_dirs(Path::new(path_str), export_name);
+        let export_name = extract_export_name(json_path);
+        let search_paths = locate_media_dirs(Path::new(path_str), &export_name);
         scan_files(&search_paths)
     })
 }
@@ -249,7 +265,7 @@ fn find_local_files(
     let mut found_files = Vec::new();
     if let Some(path) = file_index
         .get(&filename.to_ascii_lowercase())
-        .and_then(|paths| paths.iter().find(|p| seen_paths.insert((*p).clone())))
+        .and_then(|paths| paths.iter().find(|path| seen_paths.insert((*path).clone())))
     {
         found_files.push((path.clone(), filename.to_string()));
         if let (Some(dir), Some(stem), Some(ext)) = (
@@ -783,9 +799,20 @@ async fn process_message(
         }
     }
 }
-fn load_export(json_path: &str) -> Result<Export, String> {
-    let content =
-        fs::read_to_string(json_path).map_err(|e| format!("Error reading JSON file: {e}"))?;
+async fn load_export(json_path: &str) -> Result<Export, String> {
+    let content = if is_url(json_path) {
+        let resp = reqwest::get(json_path)
+            .await
+            .map_err(|e| format!("Error fetching JSON: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP error: {}", resp.status()));
+        }
+        resp.text()
+            .await
+            .map_err(|e| format!("Error reading response body: {e}"))?
+    } else {
+        fs::read_to_string(json_path).map_err(|e| format!("Error reading JSON file: {e}"))?
+    };
     serde_json::from_str(&content).map_err(|e| format!("Error parsing JSON: {e}"))
 }
 fn build_completion_message(
@@ -975,7 +1002,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
             return Ok(());
         }
     };
-    let export = match load_export(&json_path) {
+    let export = match load_export(&json_path).await {
         Ok(data) => data,
         Err(e) => {
             let _ = ctx.say(e).await;
