@@ -93,18 +93,14 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
             "--range" => {
                 index += 1;
                 if index < arguments.len() {
-                    let range_parts: Vec<&str> = arguments[index].split(',').collect();
-                    if range_parts.len() == 2 {
+                    if let Some((start, end)) = arguments[index].split_once(',') {
                         options.range_start = Some(
-                            range_parts[0]
+                            start
                                 .parse()
                                 .map_err(|_| "Invalid start value in --range")?,
                         );
-                        options.range_end = Some(
-                            range_parts[1]
-                                .parse()
-                                .map_err(|_| "Invalid end value in --range")?,
-                        );
+                        options.range_end =
+                            Some(end.parse().map_err(|_| "Invalid end value in --range")?);
                     } else {
                         return Err("Invalid format for --range. Use start,end".to_string());
                     }
@@ -157,20 +153,22 @@ fn is_cancelled(ctx: &Context<'_>) -> bool {
         .unwrap_or(false)
 }
 async fn show_reaction_users(ctx: Context<'_>, reaction_users: bool, reactions: &[ReactionInfo]) {
-    if reaction_users && !reactions.is_empty() {
-        let reaction_content = format_reaction_users(reactions);
-        if !reaction_content.is_empty() {
-            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
-            time::sleep(MESSAGE_DELAY).await;
-        }
+    if !reaction_users || reactions.is_empty() {
+        return;
     }
+    let reaction_content = format_reaction_users(reactions);
+    if reaction_content.is_empty() {
+        return;
+    }
+    let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
+    time::sleep(MESSAGE_DELAY).await;
 }
 async fn attach_author_avatar(
     reply: poise::CreateReply,
     author_avatar_file: &Option<(PathBuf, String)>,
 ) -> poise::CreateReply {
     if let Some((path, _)) = author_avatar_file {
-        if let Some(att) = serenity::CreateAttachment::path(path).await.ok() {
+        if let Ok(att) = serenity::CreateAttachment::path(path).await {
             return reply.attachment(att);
         }
     }
@@ -180,6 +178,24 @@ async fn send_reply(ctx: Context<'_>, reply: poise::CreateReply) -> Option<seren
     let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
     time::sleep(MESSAGE_DELAY).await;
     Some(msg)
+}
+fn add_embeds_to_reply(
+    mut reply: poise::CreateReply,
+    embeds: Vec<serenity::CreateEmbed>,
+) -> poise::CreateReply {
+    for embed in embeds {
+        reply = reply.embed(embed);
+    }
+    reply
+}
+fn add_attachments_to_reply(
+    mut reply: poise::CreateReply,
+    attachments: Vec<serenity::CreateAttachment>,
+) -> poise::CreateReply {
+    for attachment in attachments {
+        reply = reply.attachment(attachment);
+    }
+    reply
 }
 async fn prepare_batch(
     images: &[MediaSource],
@@ -290,12 +306,8 @@ async fn send_image_messages(
         .await;
         if !batch.embeds.is_empty() {
             let mut reply = poise::CreateReply::default();
-            for embed in batch.embeds {
-                reply = reply.embed(embed);
-            }
-            for attachment in batch.attachments {
-                reply = reply.attachment(attachment);
-            }
+            reply = add_embeds_to_reply(reply, batch.embeds);
+            reply = add_attachments_to_reply(reply, batch.attachments);
             if remaining_images.len() <= batch.count {
                 reply = with_reaction_buttons(reply, button, reactions, disable_button);
             }
@@ -324,9 +336,7 @@ async fn send_attachment_batch(
     if let Some(c) = content {
         reply = reply.content(c);
     }
-    for att in attachments {
-        reply = reply.attachment(att);
-    }
+    reply = add_attachments_to_reply(reply, attachments);
     reply = with_reaction_buttons(reply, button, reactions, disable_button);
     send_reply(ctx, reply).await
 }
@@ -497,7 +507,7 @@ async fn process_message(
             .await
         } else {
             let author_id = message.author.id;
-            let embed_url = format!("https://discord.com/users/{author_id}");
+            let embed_url = user_profile_url(author_id);
             send_image_messages(
                 ctx,
                 message,

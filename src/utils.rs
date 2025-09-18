@@ -103,6 +103,9 @@ pub fn generate_footer(
     }
     parts.join(" | ")
 }
+pub fn user_profile_url(user_id: serenity::UserId) -> String {
+    format!("https://discord.com/users/{}", user_id)
+}
 pub fn create_embed_base(
     message: &MessageInfo,
     export: &Export,
@@ -113,7 +116,7 @@ pub fn create_embed_base(
     no_timestamp: bool,
 ) -> serenity::CreateEmbed {
     let mut author_builder = serenity::CreateEmbedAuthor::new(&message.author.name)
-        .url(format!("https://discord.com/users/{}", message.author.id));
+        .url(user_profile_url(message.author.id));
     if let Some(filename) = avatar_filename {
         author_builder = author_builder.icon_url(format!("attachment://{filename}"));
     } else {
