@@ -1,5 +1,7 @@
 # 2025.09.18
 
+Added flag: `--no-ephemeral`.
+
 Accepts HTTP/HTTPS input JSON.
 
 Added `/help`.

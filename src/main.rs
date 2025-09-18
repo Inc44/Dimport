@@ -1083,7 +1083,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
     Ok(())
 }
 #[poise::command(prefix_command, slash_command)]
-async fn cancel(ctx: Context<'_>) -> Result<(), Error> {
+async fn cancel(ctx: Context<'_>, ephemeral: bool) -> Result<(), Error> {
     let should_cancel;
     {
         let mut lock = ctx.data().cancellation_flags.lock().unwrap();
@@ -1094,15 +1094,21 @@ async fn cancel(ctx: Context<'_>) -> Result<(), Error> {
             should_cancel = false;
         }
     }
-    if should_cancel {
-        ctx.say("Cancelling import...").await?;
+    let message = if should_cancel {
+        "Cancelling import..."
     } else {
-        ctx.say("No ongoing import in this channel.").await?;
-    }
+        "No ongoing import in this channel."
+    };
+    ctx.send(
+        poise::CreateReply::default()
+            .content(message)
+            .ephemeral(ephemeral),
+    )
+    .await?;
     Ok(())
 }
 #[poise::command(slash_command)]
-async fn help(ctx: Context<'_>) -> Result<(), Error> {
+async fn help(ctx: Context<'_>, ephemeral: bool) -> Result<(), Error> {
     let help_text = r#"
 # Dimport
 
@@ -1129,15 +1135,21 @@ Options:
 - `--first <n>`: Import only the first N messages.
 - `--last <n>`: Import only the last N messages.
 
-`/cancel`
+`/cancel [--ephemeral]`
 - Cancels the ongoing import in the current channel.
 
-`/help`
+`/help [--ephemeral]`
 - Shows this help message.
 
 For more details, see the project [README](https://github.com/Inc44/Dimport/blob/master/README.md) or [Wiki](https://github.com/Inc44/Dimport/wiki).
 "#;
-    let handle = ctx.say(help_text).await?;
+    let handle = ctx
+        .send(
+            poise::CreateReply::default()
+                .content(help_text)
+                .ephemeral(ephemeral),
+        )
+        .await?;
     if let Ok(mut msg) = handle.into_message().await {
         let _ = msg
             .edit(&ctx, EditMessage::new().suppress_embeds(true))
