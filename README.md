@@ -133,7 +133,7 @@ Discord bots can't react with the same emoji types multiple times to the message
 - [ ] Registered descriptions
 - [ ] Import from current channel to another channel
 - [ ] Inline emojis (messages, reactions, buttons)
-- [ ] (edited)
+- [ ] (edited) status and disappearing photos
 - [ ] User banner color instead of their exported first role
 - [ ] Current user avatar
 - [ ] /delete (last import, last n imports, all imports)
