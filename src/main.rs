@@ -126,20 +126,16 @@ fn is_url(path: &str) -> bool {
     path.starts_with("http://") || path.starts_with("https://")
 }
 fn extract_export_name(json_path: &str) -> String {
-    if is_url(json_path) {
-        let json_path_last_segment = json_path.rsplit('/').next().unwrap_or("");
-        Path::new(json_path_last_segment)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string()
+    let last_segment = if is_url(json_path) {
+        json_path.rsplit('/').next().unwrap_or("")
     } else {
-        Path::new(json_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string()
-    }
+        json_path
+    };
+    Path::new(last_segment)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string()
 }
 fn scan_files(paths: &[PathBuf]) -> FileIndex {
     let mut index = FileIndex::new();
@@ -362,27 +358,26 @@ fn format_reaction_users(reactions: &[ReactionInfo]) -> String {
         .collect::<Vec<String>>()
         .join("\n")
 }
+fn emoji_to_reaction_type(emoji: &EmojiInfo) -> serenity::ReactionType {
+    if let Some(id_str) = &emoji.id {
+        if let Ok(id) = id_str.parse::<u64>() {
+            return serenity::ReactionType::Custom {
+                animated: emoji.is_animated,
+                id: serenity::EmojiId::new(id),
+                name: Some(emoji.name.clone()),
+            };
+        }
+    }
+    serenity::ReactionType::Unicode(emoji.name.clone())
+}
 fn create_buttons(reactions: &[ReactionInfo], disable_button: bool) -> Vec<serenity::CreateButton> {
     reactions
         .iter()
         .map(|reaction| {
-            let emoji_str = if let Some(id_str) = &reaction.emoji.id {
-                if let Ok(_id) = id_str.parse::<u64>() {
-                    if reaction.emoji.is_animated {
-                        format!("<a:{}:{}>", reaction.emoji.name, id_str)
-                    } else {
-                        format!("<:{}:{}>", reaction.emoji.name, id_str)
-                    }
-                } else {
-                    reaction.emoji.name.clone()
-                }
-            } else {
-                reaction.emoji.name.clone()
-            };
             let count = get_reaction_count(reaction);
             let label = format!("\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}{count}");
             let mut button = serenity::CreateButton::new(format!("dummy_reaction_{}", reaction.emoji.code))
-                .emoji(serenity::ReactionType::Unicode(emoji_str))
+                .emoji(emoji_to_reaction_type(&reaction.emoji))
                 .label(label)
                 .style(serenity::ButtonStyle::Secondary);
             if disable_button {
@@ -395,23 +390,47 @@ fn create_buttons(reactions: &[ReactionInfo], disable_button: bool) -> Vec<seren
 fn create_reactions(reactions: &[ReactionInfo]) -> Vec<serenity::ReactionType> {
     reactions
         .iter()
-        .filter_map(|reaction| {
-            if let Some(id_str) = &reaction.emoji.id {
-                if let Ok(id) = id_str.parse::<u64>() {
-                    let emoji_id = serenity::EmojiId::new(id);
-                    Some(serenity::ReactionType::Custom {
-                        animated: reaction.emoji.is_animated,
-                        id: emoji_id,
-                        name: Some(reaction.emoji.name.clone()),
-                    })
-                } else {
-                    Some(serenity::ReactionType::Unicode(reaction.emoji.name.clone()))
-                }
-            } else {
-                Some(serenity::ReactionType::Unicode(reaction.emoji.name.clone()))
-            }
-        })
+        .map(|reaction| emoji_to_reaction_type(&reaction.emoji))
         .collect()
+}
+fn with_reaction_buttons(
+    mut reply: poise::CreateReply,
+    button: bool,
+    reactions: &[ReactionInfo],
+    disable_button: bool,
+) -> poise::CreateReply {
+    if button && !reactions.is_empty() {
+        let buttons = create_buttons(reactions, disable_button);
+        if !buttons.is_empty() {
+            reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
+        }
+    }
+    reply
+}
+async fn show_reaction_users(ctx: Context<'_>, reaction_users: bool, reactions: &[ReactionInfo]) {
+    if reaction_users && !reactions.is_empty() {
+        let reaction_content = format_reaction_users(reactions);
+        if !reaction_content.is_empty() {
+            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
+            time::sleep(MESSAGE_DELAY).await;
+        }
+    }
+}
+async fn attach_author_avatar(
+    reply: poise::CreateReply,
+    author_avatar_file: &Option<(PathBuf, String)>,
+) -> poise::CreateReply {
+    if let Some((path, _)) = author_avatar_file {
+        if let Some(att) = serenity::CreateAttachment::path(path).await.ok() {
+            return reply.attachment(att);
+        }
+    }
+    reply
+}
+async fn send_reply(ctx: Context<'_>, reply: poise::CreateReply) -> Option<serenity::Message> {
+    let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
+    time::sleep(MESSAGE_DELAY).await;
+    Some(msg)
 }
 async fn prepare_batch(
     images: &[MediaSource],
@@ -435,10 +454,8 @@ async fn prepare_batch(
         if embeds.len() >= MAX_EMBEDS {
             break;
         }
-        if matches!(source, MediaSource::Local(..)) {
-            if attachments.len() >= MAX_ATTACHMENTS {
-                break;
-            }
+        if matches!(source, MediaSource::Local(..)) && attachments.len() >= MAX_ATTACHMENTS {
+            break;
         }
         let mut embed_builder = if images_processed == 0 && is_first_batch {
             let mut embed = base_embed.clone();
@@ -488,27 +505,11 @@ async fn send_text_message(
         return None;
     }
     let embed_builder = base_embed.description(&content);
-    let mut reply = poise::CreateReply::default().embed(embed_builder);
-    if let Some((avatar_path, _)) = author_avatar_file {
-        if let Ok(attachment) = serenity::CreateAttachment::path(avatar_path).await {
-            reply = reply.attachment(attachment);
-        }
-    }
-    if button && !reactions.is_empty() {
-        let buttons = create_buttons(reactions, disable_button);
-        if !buttons.is_empty() {
-            reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
-        }
-    }
-    let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
-    time::sleep(MESSAGE_DELAY).await;
-    if reaction_users && !reactions.is_empty() {
-        let reaction_content = format_reaction_users(reactions);
-        if !reaction_content.is_empty() {
-            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
-            time::sleep(MESSAGE_DELAY).await;
-        }
-    }
+    let reply = poise::CreateReply::default().embed(embed_builder);
+    let reply = attach_author_avatar(reply, author_avatar_file).await;
+    let reply = with_reaction_buttons(reply, button, reactions, disable_button);
+    let msg = send_reply(ctx, reply).await?;
+    show_reaction_users(ctx, reaction_users, reactions).await;
     Some(msg)
 }
 async fn send_image_messages(
@@ -546,26 +547,20 @@ async fn send_image_messages(
             for attachment in batch.attachments {
                 reply = reply.attachment(attachment);
             }
-            if button && !reactions.is_empty() && remaining_images.len() <= batch.count {
-                let buttons = create_buttons(reactions, disable_button);
-                if !buttons.is_empty() {
-                    reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
-                }
+            if remaining_images.len() <= batch.count {
+                reply = with_reaction_buttons(reply, button, reactions, disable_button);
             }
-            let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
-            last_msg = Some(msg);
-            time::sleep(MESSAGE_DELAY).await;
+            if let Some(msg) = send_reply(ctx, reply).await {
+                last_msg = Some(msg);
+            }
+        }
+        if batch.count == 0 {
+            break;
         }
         remaining_images = &remaining_images[batch.count..];
         is_first_batch = false;
     }
-    if reaction_users && !reactions.is_empty() {
-        let reaction_content = format_reaction_users(reactions);
-        if !reaction_content.is_empty() {
-            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
-            time::sleep(MESSAGE_DELAY).await;
-        }
-    }
+    show_reaction_users(ctx, reaction_users, reactions).await;
     last_msg
 }
 async fn send_attachment_batch(
@@ -583,15 +578,8 @@ async fn send_attachment_batch(
     for att in attachments {
         reply = reply.attachment(att);
     }
-    if button && !reactions.is_empty() {
-        let buttons = create_buttons(reactions, disable_button);
-        if !buttons.is_empty() {
-            reply = reply.components(vec![serenity::CreateActionRow::Buttons(buttons)]);
-        }
-    }
-    let msg = ctx.send(reply).await.ok()?.into_message().await.ok()?;
-    time::sleep(MESSAGE_DELAY).await;
-    Some(msg)
+    reply = with_reaction_buttons(reply, button, reactions, disable_button);
+    send_reply(ctx, reply).await
 }
 async fn send_outside_message(
     ctx: Context<'_>,
@@ -626,21 +614,11 @@ async fn send_outside_message(
     }
     let mut last_attachment_msg: Option<serenity::Message> = None;
     if let Some(embed) = base_embed {
-        let mut metadata_reply = poise::CreateReply::default().embed(embed);
-        if let Some((path, _)) = &author_avatar_file {
-            if let Ok(attachment) = serenity::CreateAttachment::path(path).await {
-                metadata_reply = metadata_reply.attachment(attachment);
-            }
+        let reply = poise::CreateReply::default().embed(embed);
+        let reply = attach_author_avatar(reply, &author_avatar_file).await;
+        if let Some(metadata_msg) = send_reply(ctx, reply).await {
+            last_attachment_msg = Some(metadata_msg);
         }
-        let metadata_msg = ctx
-            .send(metadata_reply)
-            .await
-            .ok()?
-            .into_message()
-            .await
-            .ok()?;
-        time::sleep(MESSAGE_DELAY).await;
-        last_attachment_msg = Some(metadata_msg);
     }
     if !content.is_empty() || !locals.is_empty() {
         let mut remaining_locals = locals;
@@ -679,20 +657,14 @@ async fn send_outside_message(
             }
         }
     }
-    if reaction_users && !reactions.is_empty() {
-        let reaction_content = format_reaction_users(reactions);
-        if !reaction_content.is_empty() {
-            let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
-            time::sleep(MESSAGE_DELAY).await;
-        }
-    }
+    show_reaction_users(ctx, reaction_users, reactions).await;
     last_attachment_msg
 }
 async fn add_reactions(ctx: Context<'_>, message: &serenity::Message, reactions: &[ReactionInfo]) {
     let reaction_types = create_reactions(reactions);
     for reaction_type in reaction_types {
         let _ = message.react(&ctx, reaction_type).await;
-        time::sleep(Duration::from_millis(100)).await;
+        time::sleep(MESSAGE_DELAY).await;
     }
 }
 async fn process_message(
@@ -876,6 +848,16 @@ fn split_args(input: &str) -> Vec<String> {
     tokens
 }
 fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
+    fn parse_option(arguments: &[String], index: &mut usize, flag: &str) -> Result<usize, String> {
+        *index += 1;
+        if *index < arguments.len() {
+            arguments[*index]
+                .parse::<usize>()
+                .map_err(|_| format!("Invalid value for {flag}"))
+        } else {
+            Err(format!("Missing value for {flag}"))
+        }
+    }
     let mut options = ImportOptions::default();
     let mut index = 0;
     while index < arguments.len() {
@@ -915,52 +897,16 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
                 }
             }
             "--range-start" => {
-                index += 1;
-                if index < arguments.len() {
-                    options.range_start = Some(
-                        arguments[index]
-                            .parse()
-                            .map_err(|_| "Invalid value for --range-start")?,
-                    );
-                } else {
-                    return Err("Missing value for --range-start".to_string());
-                }
+                options.range_start = Some(parse_option(arguments, &mut index, "--range-start")?);
             }
             "--range-end" => {
-                index += 1;
-                if index < arguments.len() {
-                    options.range_end = Some(
-                        arguments[index]
-                            .parse()
-                            .map_err(|_| "Invalid value for --range-end")?,
-                    );
-                } else {
-                    return Err("Missing value for --range-end".to_string());
-                }
+                options.range_end = Some(parse_option(arguments, &mut index, "--range-end")?);
             }
             "--first" => {
-                index += 1;
-                if index < arguments.len() {
-                    options.first = Some(
-                        arguments[index]
-                            .parse()
-                            .map_err(|_| "Invalid value for --first")?,
-                    );
-                } else {
-                    return Err("Missing value for --first".to_string());
-                }
+                options.first = Some(parse_option(arguments, &mut index, "--first")?);
             }
             "--last" => {
-                index += 1;
-                if index < arguments.len() {
-                    options.last = Some(
-                        arguments[index]
-                            .parse()
-                            .map_err(|_| "Invalid value for --last")?,
-                    );
-                } else {
-                    return Err("Missing value for --last".to_string());
-                }
+                options.last = Some(parse_option(arguments, &mut index, "--last")?);
             }
             unknown => return Err(format!("Unknown option: {unknown}")),
         }
@@ -976,6 +922,23 @@ fn parse_options(arguments: &[String]) -> Result<ImportOptions, String> {
         return Err("--no-embed can only be used with --outside".to_string());
     }
     Ok(options)
+}
+fn set_cancellation(ctx: &Context<'_>, value: bool) {
+    let mut lock = ctx.data().cancellation_flags.lock().unwrap();
+    lock.insert(ctx.channel_id(), value);
+}
+fn remove_cancellation(ctx: &Context<'_>) {
+    let mut lock = ctx.data().cancellation_flags.lock().unwrap();
+    lock.remove(&ctx.channel_id());
+}
+fn is_cancelled(ctx: &Context<'_>) -> bool {
+    ctx.data()
+        .cancellation_flags
+        .lock()
+        .unwrap()
+        .get(&ctx.channel_id())
+        .cloned()
+        .unwrap_or(false)
 }
 #[poise::command(prefix_command)]
 async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
@@ -1021,26 +984,17 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
         return Ok(());
     }
     let _ = ctx
-        .say(format!("Importing {} messages…", messages_to_process.len()))
+        .say(format!(
+            "Importing {} messages...",
+            messages_to_process.len()
+        ))
         .await?;
     let file_index = create_file_index(&media_path, &json_path);
     let mut seen_paths = HashSet::new();
-    ctx.data()
-        .cancellation_flags
-        .lock()
-        .unwrap()
-        .insert(ctx.channel_id(), false);
+    set_cancellation(&ctx, false);
     let mut cancelled = false;
     for message in messages_to_process {
-        if ctx
-            .data()
-            .cancellation_flags
-            .lock()
-            .unwrap()
-            .get(&ctx.channel_id())
-            .cloned()
-            .unwrap_or(false)
-        {
+        if is_cancelled(&ctx) {
             cancelled = true;
             break;
         }
@@ -1064,11 +1018,7 @@ async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error> {
         )
         .await;
     }
-    ctx.data()
-        .cancellation_flags
-        .lock()
-        .unwrap()
-        .remove(&ctx.channel_id());
+    remove_cancellation(&ctx);
     let message = if cancelled {
         "Import cancelled".to_string()
     } else {
