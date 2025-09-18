@@ -71,28 +71,36 @@ cargo run --release
 /import "<export.json>" "<media_root>"
 ```
 
+```
+/cancel
+```
+
+```
+/help
+```
+
 ## 🎨 Command-Line Arguments
 
-| Argument              | Description                                                                                      |
-|-----------------------|--------------------------------------------------------------------------------------------------|
-| `<json_path>`         | Path to the [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) JSON file (required)                                           |
-| `<media_path>`        | Path to the directory containing downloaded media files (optional)                             |
-| `--no-guild`          | Hide guild/server name from message footer                                                     |
-| `--no-category`       | Hide category name from message footer                                                         |
-| `--no-channel`        | Hide channel name from message footer                                                          |
-| `--no-timestamp`      | Hide message timestamps                                                                         |
-| `--no-mentions`       | Skip converting @mentions to clickable Discord mentions                                        |
-| `--no-reactions`      | Skip importing reactions entirely                                                               |
-| `--no-embed`          | Skip creating embeds (only works with `--outside`)                                            |
-| `--button`            | Display reactions as interactive buttons instead of native Discord reactions                    |
-| `--reaction-users`    | Show detailed list of users who reacted to each message                                        |
-| `--outside`           | Send metadata embed separately from attachments                                    |
-| `--disable-button`    | Make reaction buttons unclickable (only works with `--button`)                                |
-| `--range <start,end>` | Import messages within specified range (zero-indexed)                                          |
-| `--range-start <n>`   | Set starting message index for import range                                                     |
-| `--range-end <n>`     | Set ending message index for import range                                                       |
-| `--first <n>`         | Import only the first N messages                                                               |
-| `--last <n>`          | Import only the last N messages                                                                |
+| Argument              | Description                                                                                           |
+|-----------------------|-------------------------------------------------------------------------------------------------------|
+| `<json_path>`         | Path to the [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) JSON file (required) |
+| `<media_path>`        | Path to the directory containing downloaded media files (optional)                                    |
+| `--no-guild`          | Hide guild/server name from message footer                                                            |
+| `--no-category`       | Hide category name from message footer                                                                |
+| `--no-channel`        | Hide channel name from message footer                                                                 |
+| `--no-timestamp`      | Hide message timestamps                                                                               |
+| `--no-mentions`       | Skip converting @mentions to clickable Discord mentions                                               |
+| `--no-reactions`      | Skip importing reactions entirely                                                                     |
+| `--no-embed`          | Skip creating embeds (only works with `--outside`)                                                    |
+| `--button`            | Display reactions as interactive buttons instead of native Discord reactions                          |
+| `--reaction-users`    | Show detailed list of users who reacted to each message                                               |
+| `--outside`           | Send metadata embed separately from attachments                                                       |
+| `--disable-button`    | Make reaction buttons unclickable (only works with `--button`)                                        |
+| `--range <start,end>` | Import messages within specified range (zero-indexed)                                                 |
+| `--range-start <n>`   | Set starting message index for import range                                                           |
+| `--range-end <n>`     | Set ending message index for import range                                                             |
+| `--first <n>`         | Import only the first N messages                                                                      |
+| `--last <n>`          | Import only the last N messages                                                                       |
 
 ## 🎯 Motivation
 

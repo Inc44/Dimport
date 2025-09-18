@@ -1,5 +1,7 @@
 # 2025.09.18
 
+Added `/help`.
+
 Added proper Discord token handling.
 
 Fixed slash command.
