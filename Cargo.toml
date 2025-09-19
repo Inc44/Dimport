@@ -1,6 +1,6 @@
 [package]
 name = "Dimport"
-version = "2025.9.18"
+version = "2025.9.19"
 edition = "2021"
 
 [dependencies]
@@ -9,5 +9,7 @@ poise = "0.6.1"
 reqwest = { version = "0.12.23", features = ["rustls-tls"] }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_json = "1.0.145"
+tempfile = "3.22.0"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
 walkdir = "2.5.0"
+zip = "5.1.1"

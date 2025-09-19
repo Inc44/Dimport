@@ -579,7 +579,7 @@ pub async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error>
             messages_to_process.len()
         ))
         .await?;
-    let file_index = create_file_index(&media_path, &json_path);
+    let (file_index, _tempdir_guard) = create_file_index(&media_path, &json_path);
     let mut seen_paths = HashSet::new();
     set_cancellation(&ctx, false);
     let mut cancelled = false;

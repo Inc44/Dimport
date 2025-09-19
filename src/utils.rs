@@ -76,12 +76,62 @@ pub fn locate_media_dirs(media_root: &Path, export_name: &str) -> Vec<PathBuf> {
     }
     search_paths
 }
-pub fn create_file_index(media_path: &Option<String>, json_path: &str) -> Option<FileIndex> {
-    media_path.as_ref().map(|path_str| {
-        let export_name = extract_export_name(json_path);
-        let search_paths = locate_media_dirs(Path::new(path_str), &export_name);
-        scan_files(&search_paths)
-    })
+pub fn is_zip_file(filename: &str) -> bool {
+    filename.to_ascii_lowercase().ends_with("zip")
+}
+fn extract_zip_to_temp(zip_path: &Path) -> Result<tempfile::TempDir, String> {
+    let file = fs::File::open(zip_path).map_err(|e| format!("Error opening zip: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Error reading zip: {e}"))?;
+    let tempdir = tempfile::tempdir().map_err(|e| format!("Error creating temp dir: {e}"))?;
+    let base_dir = tempdir.path();
+    let create_dir =
+        |path: &Path| fs::create_dir_all(path).map_err(|e| format!("Create dir failed: {e}"));
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Zip entry error: {e}"))?;
+        let output_path = match entry.enclosed_name() {
+            Some(path) => base_dir.join(path),
+            None => base_dir.join(entry.mangled_name()),
+        };
+        if entry.is_dir() || entry.name().ends_with('/') {
+            create_dir(&output_path)?;
+            continue;
+        }
+        if let Some(parent) = output_path.parent() {
+            create_dir(parent)?;
+        }
+        let mut output_file =
+            fs::File::create(&output_path).map_err(|e| format!("Create file failed: {e}"))?;
+        io::copy(&mut entry, &mut output_file).map_err(|e| format!("Write file failed: {e}"))?;
+    }
+    Ok(tempdir)
+}
+pub fn create_file_index(
+    media_path: &Option<String>,
+    json_path: &str,
+) -> (Option<FileIndex>, Option<tempfile::TempDir>) {
+    let path_str = match media_path {
+        Some(s) => s,
+        None => return (None, None),
+    };
+    let path = Path::new(path_str);
+    let export_name = extract_export_name(json_path);
+    if is_zip_file(path_str) {
+        if !path.exists() {
+            return (None, None);
+        }
+        let tempdir = match extract_zip_to_temp(path) {
+            Ok(t) => t,
+            Err(_) => return (None, None),
+        };
+        let search_paths = locate_media_dirs(tempdir.path(), &export_name);
+        let index = scan_files(&search_paths);
+        return (Some(index), Some(tempdir));
+    }
+    let search_paths = locate_media_dirs(path, &export_name);
+    let index = scan_files(&search_paths);
+    (Some(index), None)
 }
 pub fn generate_footer(
     export: &Export,
