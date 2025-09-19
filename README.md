@@ -96,6 +96,8 @@ cargo run --release
 | `--reaction-users`    | Show detailed list of users who reacted to each message                                               |
 | `--outside`           | Send metadata embed separately from attachments                                                       |
 | `--disable-button`    | Make reaction buttons unclickable (only works with `--button`)                                        |
+| `--accent-color`      | Use user accent color for embed color instead of exported role color                                  |
+| `--current-avatar`    | Use the user's current Discord avatar as author icon                                                  |
 | `--range <start,end>` | Import messages within specified range (zero-indexed)                                                 |
 | `--range-start <n>`   | Set starting message index for import range                                                           |
 | `--range-end <n>`     | Set ending message index for import range                                                             |
@@ -132,13 +134,10 @@ Discord bots can't react with the same emoji types multiple times to the message
 
 ## 🚧 TODO
 
-- [ ] Online media
 - [ ] Registered descriptions
 - [ ] Import from current channel to another channel
 - [ ] Inline emojis (messages, reactions, buttons)
 - [ ] (edited) status and disappearing photos
-- [ ] User banner color instead of their exported first role
-- [ ] Current user avatar
 - [ ] /delete (last import, last n imports, all imports)
 - [ ] Tests (json, media)
 

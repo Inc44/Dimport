@@ -1,4 +1,12 @@
-# 2025.09.18
+# 2025.09.20
+
+Added HTTP/HTTPS input ZIP.
+
+Added flag: `--accent-color`.
+
+Added flag: `--current-avatar`.
+
+# 2025.09.19
 
 Prepared for crate publishing.
 

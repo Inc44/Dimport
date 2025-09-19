@@ -94,12 +94,14 @@ pub struct ImportOptions {
     pub no_embed: bool,
     pub button: bool,
     pub reaction_users: bool,
+    pub outside: bool,
+    pub disable_button: bool,
+    pub accent_color: bool,
+    pub current_avatar: bool,
     pub range_start: Option<usize>,
     pub range_end: Option<usize>,
     pub first: Option<usize>,
     pub last: Option<usize>,
-    pub outside: bool,
-    pub disable_button: bool,
 }
 pub enum MediaSource {
     Local(PathBuf, String),

@@ -107,7 +107,26 @@ fn extract_zip_to_temp(zip_path: &Path) -> Result<tempfile::TempDir, String> {
     }
     Ok(tempdir)
 }
-pub fn create_file_index(
+async fn fetch_zip_to_tempfile(url: &str) -> Result<tempfile::NamedTempFile, String> {
+    let resp = reqwest::get(url)
+        .await
+        .map_err(|e| format!("Error fetching ZIP: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP error: {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Error reading ZIP body: {e}"))?;
+    let mut tmp =
+        tempfile::NamedTempFile::new().map_err(|e| format!("Error creating temp file: {e}"))?;
+    tmp.write_all(bytes.as_ref())
+        .map_err(|e| format!("Error writing temp ZIP: {e}"))?;
+    tmp.flush()
+        .map_err(|e| format!("Error flushing temp ZIP: {e}"))?;
+    Ok(tmp)
+}
+pub async fn create_file_index(
     media_path: &Option<String>,
     json_path: &str,
 ) -> (Option<FileIndex>, Option<tempfile::TempDir>) {
@@ -115,8 +134,21 @@ pub fn create_file_index(
         Some(s) => s,
         None => return (None, None),
     };
-    let path = Path::new(path_str);
     let export_name = extract_export_name(json_path);
+    if is_url(path_str) {
+        let tmp = match fetch_zip_to_tempfile(path_str).await {
+            Ok(t) => t,
+            Err(_) => return (None, None),
+        };
+        let tempdir = match extract_zip_to_temp(tmp.path()) {
+            Ok(t) => t,
+            Err(_) => return (None, None),
+        };
+        let search_paths = locate_media_dirs(tempdir.path(), &export_name);
+        let index = scan_files(&search_paths);
+        return (Some(index), Some(tempdir));
+    }
+    let path = Path::new(path_str);
     if is_zip_file(path_str) {
         if !path.exists() {
             return (None, None);
@@ -160,14 +192,18 @@ pub fn create_embed_base(
     message: &MessageInfo,
     export: &Export,
     avatar_filename: Option<&String>,
+    current_avatar_url: Option<&str>,
     no_guild: bool,
     no_category: bool,
     no_channel: bool,
     no_timestamp: bool,
+    accent_color_value: Option<u32>,
 ) -> serenity::CreateEmbed {
     let mut author_builder = serenity::CreateEmbedAuthor::new(&message.author.name)
         .url(user_profile_url(message.author.id));
-    if let Some(filename) = avatar_filename {
+    if let Some(icon_url) = current_avatar_url {
+        author_builder = author_builder.icon_url(icon_url.to_string());
+    } else if let Some(filename) = avatar_filename {
         author_builder = author_builder.icon_url(format!("attachment://{filename}"));
     } else {
         author_builder = author_builder.icon_url(&message.author.avatar_url);
@@ -189,7 +225,9 @@ pub fn create_embed_base(
     if let Some(ts) = timestamp {
         embed = embed.timestamp(ts);
     }
-    if let Some(color_value) = message.author.color.as_ref().and_then(|s| parse_color(s)) {
+    if let Some(color_value) = accent_color_value {
+        embed = embed.color(color_value);
+    } else if let Some(color_value) = message.author.color.as_ref().and_then(|s| parse_color(s)) {
         embed = embed.color(color_value);
     }
     embed
