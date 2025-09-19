@@ -1,5 +1,7 @@
 # 2025.09.20
 
+Added descriptions to registered slash commands and parameters.
+
 Added HTTP/HTTPS input ZIP.
 
 Added flag: `--accent-color`.

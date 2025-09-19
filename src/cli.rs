@@ -650,8 +650,12 @@ pub async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error>
     let _ = ctx.say(message).await?;
     Ok(())
 }
+/// Cancels the ongoing import in the current channel.
 #[poise::command(prefix_command, slash_command)]
-pub async fn cancel(ctx: Context<'_>, ephemeral: bool) -> Result<(), Error> {
+pub async fn cancel(
+    ctx: Context<'_>,
+    #[description = "Hide messages of command output from other users."] ephemeral: bool,
+) -> Result<(), Error> {
     let should_cancel;
     {
         let mut lock = ctx.data().cancellation_flags.lock().unwrap();
@@ -675,8 +679,12 @@ pub async fn cancel(ctx: Context<'_>, ephemeral: bool) -> Result<(), Error> {
     .await?;
     Ok(())
 }
+/// Shows Dimport help message.
 #[poise::command(slash_command)]
-pub async fn help(ctx: Context<'_>, ephemeral: bool) -> Result<(), Error> {
+pub async fn help(
+    ctx: Context<'_>,
+    #[description = "Hide messages of command output from other users."] ephemeral: bool,
+) -> Result<(), Error> {
     let help_text = r#"
 # Dimport
 `/import <json_path> <media_path> [options]`

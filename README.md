@@ -128,13 +128,12 @@ Discord opens the browser when clicking on a user handle instead of doing the sa
 
 Discord bots can't react with the same emoji types multiple times to the message, so for mimicking multiple reactions, you can use `--button`. However, Discord does not support changing button text on click natively, so the button's reaction count doesn't change. Also, to avoid getting "Button interaction failed," you can freeze/disable buttons to make them unclickable using `--disable-button`, which unfortunately makes them grayed out. If you do not want to import reactions, you can use `--no-reactions`. So, good luck choosing your poison.
 
-`/import` can't be registered as a slash command because it has too many flags or options. Therefore, its output cannot be ephemeral. Embeds are not suppressed for `/help` when ephemeral is used, probably because they disappear anyway.
+`/import` can't be registered as a slash command because it has too many flags or options, and it makes the bot send separate messages instead of one stream. Therefore, its output cannot be ephemeral. Embeds are not suppressed for `/help` when ephemeral is used, probably because they disappear anyway.
 
 `<json_path>` can be a link, either Google Drive download type `https://drive.usercontent.google.com/download?id=...` or GitHub raw type `https://raw.githubusercontent.com/user/repo/refs/heads/master/...`. However, other websites may not work for unknown reasons, like some temporary clipboards `https://nopaste.net/...`.
 
 ## 🚧 TODO
 
-- [ ] Registered descriptions
 - [ ] Import from current channel to another channel
 - [ ] Inline emojis (messages, reactions, buttons)
 - [ ] (edited) status and disappearing photos
