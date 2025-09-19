@@ -118,6 +118,10 @@ Discord opens the browser when clicking on a user handle instead of doing the sa
 
 - [Open a user's profile when sending a link like https://discord.com/users/USER_ID](https://github.com/discord/discord-api-docs/discussions/5183)
 
+`set_var` of [dotenvy](https://github.com/allan2/dotenvy) is unsafe under the Rust 2024 edition. More details:
+
+- [Functions that modify the environment have undocumented safety requirements](https://github.com/allan2/dotenvy/issues/112)
+
 ## ⛔ Known Limitations
 
 Discord bots can't react with the same emoji types multiple times to the message, so for mimicking multiple reactions, you can use `--button`. However, Discord does not support changing button text on click natively, so the button's reaction count doesn't change. Also, to avoid getting "Button interaction failed," you can freeze/disable buttons to make them unclickable using `--disable-button`, which unfortunately makes them grayed out. If you do not want to import reactions, you can use `--no-reactions`. So, good luck choosing your poison.
@@ -128,7 +132,6 @@ Discord bots can't react with the same emoji types multiple times to the message
 
 ## 🚧 TODO
 
-- [ ] `.zip` as media input
 - [ ] Online media
 - [ ] Registered descriptions
 - [ ] Import from current channel to another channel

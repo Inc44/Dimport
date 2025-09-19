@@ -1,5 +1,15 @@
 # 2025.09.18
 
+Prepared for crate publishing.
+
+Improved performance and reduced release binary size.
+
+Relaxed version constraints.
+
+Accepts media directory input as ZIP.
+
+# 2025.09.18
+
 Added flag: `--no-ephemeral`.
 
 Accepts HTTP/HTTPS input JSON.
