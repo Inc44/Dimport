@@ -150,6 +150,9 @@ Creators of:
 - [Tokio](https://tokio.rs)
 - [walkdir](https://github.com/BurntSushi/walkdir)
 - [dotenvy](https://github.com/allan2/dotenvy)
+- [reqwest](https://github.com/seanmonstar/reqwest)
+- [zip](https://github.com/zip-rs/zip2)
+- [tempfile](https://github.com/Stebalien/tempfile)
 
 People:
 
