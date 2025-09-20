@@ -162,7 +162,7 @@ async fn show_reaction_users(ctx: Context<'_>, reaction_users: bool, reactions: 
     if reaction_content.is_empty() {
         return;
     }
-    let _ = ctx.say(format!("Reactions:\n{}", reaction_content)).await;
+    let _ = ctx.say(format!("Reactions:\n{reaction_content}")).await;
     time::sleep(MESSAGE_DELAY).await;
 }
 async fn attach_author_avatar(

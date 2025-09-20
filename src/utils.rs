@@ -6,6 +6,8 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
+const PADDING: &str =
+    "\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}";
 pub fn is_image_file(filename: &str) -> bool {
     IMAGE_EXTENSIONS
         .iter()
@@ -369,11 +371,12 @@ pub fn create_buttons(
         .iter()
         .map(|reaction| {
             let count = get_reaction_count(reaction);
-            let label = format!("\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}\u{200A}\u{2060}{count}");
-            let mut button = serenity::CreateButton::new(format!("dummy_reaction_{}", reaction.emoji.code))
-                .emoji(emoji_to_reaction_type(&reaction.emoji))
-                .label(label)
-                .style(serenity::ButtonStyle::Secondary);
+            let label = format!("{PADDING}{count}");
+            let mut button =
+                serenity::CreateButton::new(format!("dummy_reaction_{}", reaction.emoji.code))
+                    .emoji(emoji_to_reaction_type(&reaction.emoji))
+                    .label(label)
+                    .style(serenity::ButtonStyle::Secondary);
             if disable_button {
                 button = button.disabled(true);
             }
