@@ -326,6 +326,18 @@ pub fn get_reaction_count(reaction: &ReactionInfo) -> u64 {
         _ => 1,
     }
 }
+pub fn format_emoji(emoji: &EmojiInfo) -> String {
+    if let Some(id) = &emoji.id {
+        if !id.is_empty() {
+            return if emoji.is_animated {
+                format!("<a:{}:{}>", emoji.name, id)
+            } else {
+                format!("<:{}:{}>", emoji.name, id)
+            };
+        }
+    }
+    emoji.name.clone()
+}
 pub fn format_reaction_users(reactions: &[ReactionInfo]) -> String {
     reactions
         .iter()
@@ -344,7 +356,7 @@ pub fn format_reaction_users(reactions: &[ReactionInfo]) -> String {
             if user_mentions.is_empty() {
                 None
             } else {
-                let emoji_display = reaction.emoji.name.clone();
+                let emoji_display = format_emoji(&reaction.emoji);
                 Some(format!("{} : {}", emoji_display, user_mentions.join(", ")))
             }
         })
@@ -357,11 +369,11 @@ pub fn emoji_to_reaction_type(emoji: &EmojiInfo) -> serenity::ReactionType {
             return serenity::ReactionType::Custom {
                 animated: emoji.is_animated,
                 id: serenity::EmojiId::new(id),
-                name: Some(emoji.name.clone()),
+                name: Some(format_emoji(&emoji)),
             };
         }
     }
-    serenity::ReactionType::Unicode(emoji.name.clone())
+    serenity::ReactionType::Unicode(format_emoji(&emoji))
 }
 pub fn create_buttons(
     reactions: &[ReactionInfo],

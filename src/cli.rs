@@ -408,16 +408,6 @@ async fn send_outside_message(
             }
         }
     }
-    if let Some(msg) = &last_attachment_msg {
-        if button && !reactions.is_empty() {
-            let buttons = create_buttons(reactions, disable_button);
-            if !buttons.is_empty() {
-                let edit_builder = serenity::EditMessage::new()
-                    .components(vec![serenity::CreateActionRow::Buttons(buttons)]);
-                let _ = msg.clone().edit(ctx, edit_builder).await;
-            }
-        }
-    }
     show_reaction_users(ctx, reaction_users, reactions).await;
     last_attachment_msg
 }
@@ -442,40 +432,28 @@ async fn process_message(
     export: &Export,
     file_index: &Option<FileIndex>,
     seen_paths: &mut HashSet<PathBuf>,
-    no_guild: bool,
-    no_category: bool,
-    no_channel: bool,
-    no_timestamp: bool,
-    no_mentions: bool,
-    no_reactions: bool,
-    no_embed: bool,
-    button: bool,
-    reaction_users: bool,
-    outside: bool,
-    disable_button: bool,
-    accent_color: bool,
-    current_avatar: bool,
+    options: &ImportOptions,
 ) {
-    let author_avatar_file = if no_embed || current_avatar {
+    let author_avatar_file = if options.no_embed || options.current_avatar {
         None
     } else {
         file_index
             .as_ref()
             .and_then(|index| find_avatar(&message.author.id, index))
     };
-    let current_avatar_url = if current_avatar {
+    let current_avatar_url = if options.current_avatar {
         fetch_current_avatar_url(&ctx, message.author.id).await
     } else {
         None
     };
-    let accent_color_value = if accent_color {
+    let accent_color_value = if options.accent_color {
         fetch_accent_color(&ctx, message.author.id).await
     } else {
         None
     };
-    let last_sent_message = if outside {
+    let last_sent_message = if options.outside {
         let attachment_sources = collect_sources(message, file_index, seen_paths, |_| true);
-        let base_embed = if no_embed {
+        let base_embed = if options.no_embed {
             None
         } else {
             Some(create_embed_base(
@@ -483,10 +461,10 @@ async fn process_message(
                 export,
                 author_avatar_file.as_ref().map(|(_, name)| name),
                 current_avatar_url.as_deref(),
-                no_guild,
-                no_category,
-                no_channel,
-                no_timestamp,
+                options.no_guild,
+                options.no_category,
+                options.no_channel,
+                options.no_timestamp,
                 accent_color_value,
             ))
         };
@@ -496,11 +474,11 @@ async fn process_message(
             base_embed,
             attachment_sources,
             author_avatar_file,
-            no_mentions,
-            button,
-            reaction_users,
+            options.no_mentions,
+            options.button,
+            options.reaction_users,
             &message.reactions,
-            disable_button,
+            options.disable_button,
         )
         .await
     } else {
@@ -512,10 +490,10 @@ async fn process_message(
             export,
             author_avatar_file.as_ref().map(|(_, name)| name),
             current_avatar_url.as_deref(),
-            no_guild,
-            no_category,
-            no_channel,
-            no_timestamp,
+            options.no_guild,
+            options.no_category,
+            options.no_channel,
+            options.no_timestamp,
             accent_color_value,
         );
         if image_sources.is_empty() {
@@ -524,11 +502,11 @@ async fn process_message(
                 message,
                 base_embed,
                 &author_avatar_file,
-                no_mentions,
-                button,
-                reaction_users,
+                options.no_mentions,
+                options.button,
+                options.reaction_users,
                 &message.reactions,
-                disable_button,
+                options.disable_button,
             )
             .await
         } else {
@@ -541,17 +519,17 @@ async fn process_message(
                 image_sources,
                 author_avatar_file,
                 embed_url,
-                no_mentions,
-                button,
-                reaction_users,
+                options.no_mentions,
+                options.button,
+                options.reaction_users,
                 &message.reactions,
-                disable_button,
+                options.disable_button,
             )
             .await
         }
     };
     if let Some(sent_msg) = last_sent_message {
-        if !button && !no_reactions && !message.reactions.is_empty() {
+        if !options.button && !options.no_reactions && !message.reactions.is_empty() {
             add_reactions(ctx, &sent_msg, &message.reactions).await;
         }
     }
@@ -620,19 +598,7 @@ pub async fn import(ctx: Context<'_>, #[rest] args: String) -> Result<(), Error>
             &export,
             &file_index,
             &mut seen_paths,
-            options.no_guild,
-            options.no_category,
-            options.no_channel,
-            options.no_timestamp,
-            options.no_mentions,
-            options.no_reactions,
-            options.no_embed,
-            options.button,
-            options.reaction_users,
-            options.outside,
-            options.disable_button,
-            options.accent_color,
-            options.current_avatar,
+            &options,
         )
         .await;
     }

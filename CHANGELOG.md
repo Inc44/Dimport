@@ -1,5 +1,7 @@
 # 2025.09.20
 
+Fixed `edited` status after adding buttons.
+
 Added descriptions to registered slash commands and parameters.
 
 Added HTTP/HTTPS input ZIP.
