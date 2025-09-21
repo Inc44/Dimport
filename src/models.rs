@@ -44,6 +44,7 @@ pub struct MessageInfo {
     pub timestamp_edited: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub mentions: Vec<Mention>,
+    pub inline_emojis: Vec<EmojiInfo>,
     pub reactions: Vec<ReactionInfo>,
 }
 #[derive(Deserialize)]

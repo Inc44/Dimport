@@ -268,6 +268,7 @@ async fn send_text_message(
     disable_button: bool,
 ) -> Option<serenity::Message> {
     let content = replace_mentions(&message.content, &message.mentions, no_mentions);
+    let content = replace_emojis(&content, &message.inline_emojis);
     if content.is_empty() && author_avatar_file.is_none() {
         return None;
     }
@@ -293,6 +294,7 @@ async fn send_image_messages(
     disable_button: bool,
 ) -> Option<serenity::Message> {
     let content = replace_mentions(&message.content, &message.mentions, no_mentions);
+    let content = replace_emojis(&content, &message.inline_emojis);
     let mut remaining_images: &[MediaSource] = &image_sources;
     let mut is_first_batch = true;
     let mut last_msg: Option<serenity::Message> = None;
@@ -367,6 +369,7 @@ async fn send_outside_message(
         }
     }
     let mut content = replace_mentions(&message.content, &message.mentions, no_mentions);
+    content = replace_emojis(&content, &message.inline_emojis);
     if !remotes.is_empty() {
         if !content.is_empty() {
             content.push('\n');

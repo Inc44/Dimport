@@ -1,6 +1,6 @@
 [package]
 name = "Dimport"
-version = "2025.9.20"
+version = "2025.9.21"
 authors = ["Inc44"]
 edition = "2021"
 rust-version = "1.83"

@@ -136,7 +136,7 @@ Discord bots can't react with the same emoji types multiple times to the message
 
 `<json_path>` can be a link, either Google Drive download type `https://drive.usercontent.google.com/download?id=...` or GitHub raw type `https://raw.githubusercontent.com/user/repo/refs/heads/master/...`. However, other websites may not work for unknown reasons, like some temporary clipboards `https://nopaste.net/...`.
 
-Emojis that don't belong to the server may not be visible as images.
+Emojis that do not belong to the server are not visible.
 
 Content like embeds or polls is not imported.
 

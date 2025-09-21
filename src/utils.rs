@@ -320,6 +320,23 @@ pub fn replace_mentions(content: &str, mentions: &[Mention], no_mentions: bool) 
     }
     processed_content
 }
+pub fn replace_emojis(content: &str, inline_emojis: &[EmojiInfo]) -> String {
+    let mut processed_content = content.to_string();
+    for emoji in inline_emojis {
+        if let Some(id) = &emoji.id {
+            if !id.is_empty() {
+                let code = format!(":{}:", emoji.code);
+                let formatted_emoji = if emoji.is_animated {
+                    format!("<a:{}:{}>", emoji.name, id)
+                } else {
+                    format!("<:{}:{}>", emoji.name, id)
+                };
+                processed_content = processed_content.replace(&code, &formatted_emoji);
+            }
+        }
+    }
+    processed_content
+}
 pub fn get_reaction_count(reaction: &ReactionInfo) -> u64 {
     match &reaction.count {
         serde_json::Value::Number(n) => n.as_u64().unwrap_or(1),

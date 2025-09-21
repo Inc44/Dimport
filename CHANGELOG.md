@@ -1,3 +1,7 @@
+# 2025.09.21
+
+Fixed inline emojis.
+
 # 2025.09.20
 
 Fixed `edited` status after adding buttons.
