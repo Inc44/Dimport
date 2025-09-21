@@ -128,6 +128,8 @@ There is an edge case that makes the original message disappear when 11 buttons 
 
 Cancel may not work if there are multiple imports in the same channel.
 
+Replies are randomly marked. A possible solution is to add an option to reply as an embed to make them consistent.
+
 ## ⛔ Known Limitations
 
 Discord bots can't react with the same emoji types multiple times to the message, so for mimicking multiple reactions, you can use `--button`. However, Discord does not support changing button text on click natively, so the button's reaction count doesn't change. Also, to avoid getting "Button interaction failed," you can freeze/disable buttons to make them unclickable using `--disable-button`, which unfortunately makes them grayed out. If you do not want to import reactions, you can use `--no-reactions`. So, good luck choosing your poison.
